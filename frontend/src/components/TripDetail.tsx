@@ -188,14 +188,47 @@ export const TripDetail = () => {
                 <dd className="text-sm text-gray-900">{trip.parent_name || 'Not assigned'}</dd>
               </div>
               <div>
-                <dt className="text-sm font-medium text-gray-500">Clinician</dt>
-                <dd className="text-sm text-gray-900">{trip.clinician_name || 'Not assigned'}</dd>
+                <dt className="text-sm font-medium text-gray-500">Assigned Clinician</dt>
+                <dd className="text-sm text-gray-900">{trip.assigned_clinician_name || 'Not assigned'}</dd>
               </div>
             </dl>
           </div>
 
+          {(trip.clinician_name || trip.clinician_phone || trip.clinician_email) && (
+            <div className="border-t pt-6">
+              <h3 className="text-lg font-semibold mb-3">Clinician Information</h3>
+              <dl className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {trip.clinician_name && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Name</dt>
+                    <dd className="text-sm text-gray-900">{trip.clinician_name}</dd>
+                  </div>
+                )}
+                {trip.clinician_phone && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Phone</dt>
+                    <dd className="text-sm text-gray-900">{trip.clinician_phone}</dd>
+                  </div>
+                )}
+                {trip.clinician_email && (
+                  <div>
+                    <dt className="text-sm font-medium text-gray-500">Email</dt>
+                    <dd className="text-sm text-gray-900">{trip.clinician_email}</dd>
+                  </div>
+                )}
+              </dl>
+            </div>
+          )}
+
+          {trip.additional_info && (
+            <div className="border-t pt-6">
+              <h3 className="text-lg font-semibold mb-3">Additional Information</h3>
+              <p className="text-sm text-gray-900 whitespace-pre-wrap">{trip.additional_info}</p>
+            </div>
+          )}
+
           <div className="border-t pt-6">
-            <h3 className="text-lg font-semibold mb-3">Additional Information</h3>
+            <h3 className="text-lg font-semibold mb-3">Metadata</h3>
             <dl className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <dt className="text-sm font-medium text-gray-500">Created At</dt>

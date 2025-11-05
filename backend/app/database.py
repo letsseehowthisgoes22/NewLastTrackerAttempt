@@ -50,10 +50,22 @@ def init_db():
             assigned_agent_id INTEGER REFERENCES users(id),
             assigned_parent_id INTEGER REFERENCES users(id),
             assigned_clinician_id INTEGER REFERENCES users(id),
+            clinician_name VARCHAR(255),
+            clinician_phone VARCHAR(50),
+            clinician_email VARCHAR(255),
+            additional_info TEXT,
             created_by_id INTEGER REFERENCES users(id),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+    """)
+    
+    cursor.execute("""
+        ALTER TABLE trips 
+        ADD COLUMN IF NOT EXISTS clinician_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS clinician_phone VARCHAR(50),
+        ADD COLUMN IF NOT EXISTS clinician_email VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS additional_info TEXT;
     """)
     
     cursor.execute("""

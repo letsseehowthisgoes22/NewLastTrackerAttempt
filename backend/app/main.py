@@ -123,8 +123,9 @@ async def create_trip(trip_data: TripCreate, current_user: dict = Depends(get_cu
             pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
             scheduled_start, scheduled_end, flight_number, airline,
             assigned_agent_id, assigned_parent_id, assigned_clinician_id,
+            clinician_name, clinician_phone, clinician_email, additional_info,
             created_by_id, status
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
     """
     
@@ -143,6 +144,10 @@ async def create_trip(trip_data: TripCreate, current_user: dict = Depends(get_cu
         trip_data.assigned_agent_id,
         trip_data.assigned_parent_id,
         trip_data.assigned_clinician_id,
+        trip_data.clinician_name,
+        trip_data.clinician_phone,
+        trip_data.clinician_email,
+        trip_data.additional_info,
         current_user["id"],
         "scheduled"
     ))
@@ -154,7 +159,7 @@ async def create_trip(trip_data: TripCreate, current_user: dict = Depends(get_cu
         SELECT t.*, 
                ua.first_name || ' ' || ua.last_name as agent_name,
                up.first_name || ' ' || up.last_name as parent_name,
-               uc.first_name || ' ' || uc.last_name as clinician_name
+               uc.first_name || ' ' || uc.last_name as assigned_clinician_name
         FROM trips t
         LEFT JOIN users ua ON t.assigned_agent_id = ua.id
         LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -183,7 +188,7 @@ async def get_trips(current_user: dict = Depends(get_current_user)):
             SELECT t.*, 
                    ua.first_name || ' ' || ua.last_name as agent_name,
                    up.first_name || ' ' || up.last_name as parent_name,
-                   uc.first_name || ' ' || uc.last_name as clinician_name
+                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name
             FROM trips t
             LEFT JOIN users ua ON t.assigned_agent_id = ua.id
             LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -196,7 +201,7 @@ async def get_trips(current_user: dict = Depends(get_current_user)):
             SELECT t.*, 
                    ua.first_name || ' ' || ua.last_name as agent_name,
                    up.first_name || ' ' || up.last_name as parent_name,
-                   uc.first_name || ' ' || uc.last_name as clinician_name
+                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name
             FROM trips t
             LEFT JOIN users ua ON t.assigned_agent_id = ua.id
             LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -210,7 +215,7 @@ async def get_trips(current_user: dict = Depends(get_current_user)):
             SELECT t.*, 
                    ua.first_name || ' ' || ua.last_name as agent_name,
                    up.first_name || ' ' || up.last_name as parent_name,
-                   uc.first_name || ' ' || uc.last_name as clinician_name
+                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name
             FROM trips t
             LEFT JOIN users ua ON t.assigned_agent_id = ua.id
             LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -224,7 +229,7 @@ async def get_trips(current_user: dict = Depends(get_current_user)):
             SELECT t.*, 
                    ua.first_name || ' ' || ua.last_name as agent_name,
                    up.first_name || ' ' || up.last_name as parent_name,
-                   uc.first_name || ' ' || uc.last_name as clinician_name
+                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name
             FROM trips t
             LEFT JOIN users ua ON t.assigned_agent_id = ua.id
             LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -257,7 +262,7 @@ async def get_trip(trip_id: int, current_user: dict = Depends(get_current_user))
         SELECT t.*, 
                ua.first_name || ' ' || ua.last_name as agent_name,
                up.first_name || ' ' || up.last_name as parent_name,
-               uc.first_name || ' ' || uc.last_name as clinician_name
+               uc.first_name || ' ' || uc.last_name as assigned_clinician_name
         FROM trips t
         LEFT JOIN users ua ON t.assigned_agent_id = ua.id
         LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -358,6 +363,18 @@ async def update_trip(trip_id: int, trip_data: TripUpdate, current_user: dict = 
     if trip_data.assigned_clinician_id is not None:
         update_fields.append("assigned_clinician_id = %s")
         update_values.append(trip_data.assigned_clinician_id)
+    if trip_data.clinician_name is not None:
+        update_fields.append("clinician_name = %s")
+        update_values.append(trip_data.clinician_name)
+    if trip_data.clinician_phone is not None:
+        update_fields.append("clinician_phone = %s")
+        update_values.append(trip_data.clinician_phone)
+    if trip_data.clinician_email is not None:
+        update_fields.append("clinician_email = %s")
+        update_values.append(trip_data.clinician_email)
+    if trip_data.additional_info is not None:
+        update_fields.append("additional_info = %s")
+        update_values.append(trip_data.additional_info)
     if trip_data.status is not None:
         update_fields.append("status = %s")
         update_values.append(trip_data.status)
@@ -374,7 +391,7 @@ async def update_trip(trip_id: int, trip_data: TripUpdate, current_user: dict = 
         SELECT t.*, 
                ua.first_name || ' ' || ua.last_name as agent_name,
                up.first_name || ' ' || up.last_name as parent_name,
-               uc.first_name || ' ' || uc.last_name as clinician_name
+               uc.first_name || ' ' || uc.last_name as assigned_clinician_name
         FROM trips t
         LEFT JOIN users ua ON t.assigned_agent_id = ua.id
         LEFT JOIN users up ON t.assigned_parent_id = up.id

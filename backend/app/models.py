@@ -33,6 +33,10 @@ class TripCreate(BaseModel):
     assigned_agent_id: Optional[int] = None
     assigned_parent_id: Optional[int] = None
     assigned_clinician_id: Optional[int] = None
+    clinician_name: Optional[str] = None
+    clinician_phone: Optional[str] = None
+    clinician_email: Optional[str] = None
+    additional_info: Optional[str] = None
 
 class TripUpdate(BaseModel):
     client_name: Optional[str] = None
@@ -49,6 +53,10 @@ class TripUpdate(BaseModel):
     assigned_agent_id: Optional[int] = None
     assigned_parent_id: Optional[int] = None
     assigned_clinician_id: Optional[int] = None
+    clinician_name: Optional[str] = None
+    clinician_phone: Optional[str] = None
+    clinician_email: Optional[str] = None
+    additional_info: Optional[str] = None
     status: Optional[str] = None
 
 class TripResponse(BaseModel):
@@ -70,12 +78,16 @@ class TripResponse(BaseModel):
     assigned_agent_id: Optional[int] = None
     assigned_parent_id: Optional[int] = None
     assigned_clinician_id: Optional[int] = None
+    clinician_name: Optional[str] = None
+    clinician_phone: Optional[str] = None
+    clinician_email: Optional[str] = None
+    additional_info: Optional[str] = None
     created_by_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
     agent_name: Optional[str] = None
     parent_name: Optional[str] = None
-    clinician_name: Optional[str] = None
+    assigned_clinician_name: Optional[str] = None
 
 class LocationUpdateResponse(BaseModel):
     id: int

@@ -38,12 +38,16 @@ export interface Trip {
   assigned_agent_id: number | null;
   assigned_parent_id: number | null;
   assigned_clinician_id: number | null;
+  clinician_name: string | null;
+  clinician_phone: string | null;
+  clinician_email: string | null;
+  additional_info: string | null;
   created_by_id: number;
   created_at: string;
   updated_at: string;
   agent_name: string | null;
   parent_name: string | null;
-  clinician_name: string | null;
+  assigned_clinician_name: string | null;
 }
 
 export interface TripCreate {
@@ -61,6 +65,10 @@ export interface TripCreate {
   assigned_agent_id: number | null;
   assigned_parent_id: number | null;
   assigned_clinician_id: number | null;
+  clinician_name: string | null;
+  clinician_phone: string | null;
+  clinician_email: string | null;
+  additional_info: string | null;
 }
 
 export interface Document {

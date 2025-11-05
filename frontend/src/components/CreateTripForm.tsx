@@ -45,6 +45,10 @@ export const CreateTripForm = () => {
     assigned_agent_id: null,
     assigned_parent_id: null,
     assigned_clinician_id: null,
+    clinician_name: null,
+    clinician_phone: null,
+    clinician_email: null,
+    additional_info: null,
   });
 
   useEffect(() => {
@@ -293,7 +297,7 @@ export const CreateTripForm = () => {
             </div>
 
             <div>
-              <Label htmlFor="assigned_clinician_id">Assign Clinician</Label>
+              <Label htmlFor="assigned_clinician_id">Assign Clinician (Optional)</Label>
               <Select
                 value={formData.assigned_clinician_id?.toString() || ''}
                 onValueChange={(value) => setFormData({ ...formData, assigned_clinician_id: value ? parseInt(value) : null })}
@@ -309,6 +313,50 @@ export const CreateTripForm = () => {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <Label htmlFor="clinician_name">Clinician Name</Label>
+                <Input
+                  id="clinician_name"
+                  value={formData.clinician_name || ''}
+                  onChange={(e) => setFormData({ ...formData, clinician_name: e.target.value || null })}
+                  placeholder="Dr. Smith"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="clinician_phone">Clinician Phone</Label>
+                <Input
+                  id="clinician_phone"
+                  value={formData.clinician_phone || ''}
+                  onChange={(e) => setFormData({ ...formData, clinician_phone: e.target.value || null })}
+                  placeholder="(555) 123-4567"
+                />
+              </div>
+
+              <div>
+                <Label htmlFor="clinician_email">Clinician Email</Label>
+                <Input
+                  id="clinician_email"
+                  type="email"
+                  value={formData.clinician_email || ''}
+                  onChange={(e) => setFormData({ ...formData, clinician_email: e.target.value || null })}
+                  placeholder="doctor@clinic.com"
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="additional_info">Additional Information</Label>
+              <textarea
+                id="additional_info"
+                className="w-full min-h-[100px] px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                value={formData.additional_info || ''}
+                onChange={(e) => setFormData({ ...formData, additional_info: e.target.value || null })}
+                placeholder="Any additional notes or special instructions..."
+              />
             </div>
 
             <div className="flex gap-4 pt-4">
