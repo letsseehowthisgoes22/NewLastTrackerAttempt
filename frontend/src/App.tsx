@@ -1,6 +1,24 @@
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LoginPage } from './components/LoginPage';
 import { Dashboard } from './components/Dashboard';
+import { TripsList } from './components/TripsList';
+import { TripDetail } from './components/TripDetail';
+import { CreateTripForm } from './components/CreateTripForm';
+
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p>Loading...</p>
+      </div>
+    );
+  }
+
+  return user ? <>{children}</> : <Navigate to="/login" />;
+}
 
 function AppContent() {
   const { user, isLoading } = useAuth();
@@ -13,14 +31,52 @@ function AppContent() {
     );
   }
 
-  return user ? <Dashboard /> : <LoginPage />;
+  return (
+    <Routes>
+      <Route path="/login" element={!user ? <LoginPage /> : <Navigate to="/" />} />
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/trips"
+        element={
+          <ProtectedRoute>
+            <TripsList />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/trips/create"
+        element={
+          <ProtectedRoute>
+            <CreateTripForm />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/trips/:id"
+        element={
+          <ProtectedRoute>
+            <TripDetail />
+          </ProtectedRoute>
+        }
+      />
+    </Routes>
+  );
 }
 
 function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 

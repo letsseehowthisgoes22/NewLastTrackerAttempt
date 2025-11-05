@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -5,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 
 export const Dashboard = () => {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
 
   const getRoleBadgeColor = (role: string) => {
     switch (role) {
@@ -26,16 +28,21 @@ export const Dashboard = () => {
       <header className="bg-white shadow">
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold text-gray-900">
+            <h1 className="text-2xl font-bold text-gray-900 cursor-pointer" onClick={() => navigate('/')}>
               IYT Transport Tracker
             </h1>
             <Badge className={getRoleBadgeColor(user?.role || '')}>
               {user?.role?.toUpperCase()}
             </Badge>
           </div>
-          <Button onClick={logout} variant="outline">
-            Logout
-          </Button>
+          <div className="flex items-center gap-4">
+            <Button onClick={() => navigate('/trips')} variant="outline">
+              View Trips
+            </Button>
+            <Button onClick={logout} variant="outline">
+              Logout
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -76,9 +83,23 @@ export const Dashboard = () => {
               </div>
 
               <div className="pt-4 border-t">
+                <h3 className="text-lg font-semibold mb-3">Quick Actions</h3>
+                <div className="flex flex-wrap gap-3">
+                  <Button onClick={() => navigate('/trips')}>
+                    View My Trips
+                  </Button>
+                  {user?.role === 'admin' && (
+                    <Button onClick={() => navigate('/trips/create')} variant="default">
+                      Create New Trip
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-4 border-t">
                 <p className="text-sm text-gray-600">
-                  Task 1 (Basic Authentication) is complete! The authentication system is working correctly.
-                  Future tasks will add trip management, real-time tracking, and more features to this dashboard.
+                  Tasks 1-3 are complete! The authentication system and trip management features are working correctly.
+                  Future tasks will add real-time tracking, document uploads, messaging, and more features to this dashboard.
                 </p>
               </div>
             </div>
