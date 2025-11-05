@@ -1,0 +1,4380 @@
+﻿PROJECT: Real-Time Adolescent Transport Tracking Application
+
+
+I'm building a web application for my behavioral health transport company (Interactive Youth Transport) to track transports in real-time and facilitate communication between transport agents, parents, and clinicians.
+
+
+ARCHITECTURE:
+- Backend: FastAPI (Python) + PostgreSQL
+- Frontend: React + TypeScript
+- Real-time: WebSocket (Socket.io)
+- Maps: Google Maps JavaScript API
+- Mobile: React Native with Expo (simplified - no GPS tracking initially)
+- GPS Tracking: Will use hardware GPS trackers via API (placeholder for now)
+
+
+PROJECT OVERVIEW:
+I have 20 sequential tasks that build this system from authentication to production deployment. I'm providing ALL 20 tasks so you understand the full architecture and dependencies.
+
+
+IMPORTANT RULES:
+1. Work in phases - I'll tell you which tasks to complete in each session
+2. Test each task before moving to the next
+3. Commit working code after each completed task
+4. Use environment variables for all secrets
+5. Build in a way that doesn't break future tasks
+6. If stuck on a task for >30 minutes, stop and explain the issue
+7. Document any setup requirements (API keys, etc.)
+
+
+---
+
+
+TASK 1: Basic Authentication System
+TASK 1: Basic Authentication System
+Context: Build a minimal authentication system that allows 4 user roles to log in and access the application. Security hardening (bcrypt, refresh tokens, etc.) will come later - this is just enough to identify users and test role-based features.
+Requirements:
+* Backend: FastAPI (Python) or Node.js/Express
+* Database: PostgreSQL
+* Auth: JWT tokens (simple, no refresh tokens yet)
+* 4 User Roles: Admin, Transport Agent, Parent, Clinician
+Database Schema:
+sql
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    role VARCHAR(50) NOT NULL, -- 'admin', 'agent', 'parent', 'clinician'
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    phone VARCHAR(20),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- Insert test users (plaintext passwords for now)
+INSERT INTO users (email, password, role, first_name, last_name) VALUES
+('admin@iyt.com', 'admin123', 'admin', 'Admin', 'User'),
+('agent@iyt.com', 'agent123', 'agent', 'Transport', 'Agent'),
+('parent@iyt.com', 'parent123', 'parent', 'Parent', 'User'),
+('clinician@iyt.com', 'clinician123', 'clinician', 'Dr', 'Smith');
+API Endpoints to Build:
+1. POST /api/auth/login
+   * Input: { "email": "admin@iyt.com", "password": "admin123" }
+   * Process:
+      * Find user by email
+      * Compare password (plaintext comparison for now)
+      * Generate JWT token with payload: { user_id, email, role }
+      * Token expiration: 24 hours
+   * Output: { "token": "jwt_token_here", "user": { "id", "email", "role", "first_name", "last_name" } }
+   * Error: 401 if credentials invalid
+2. GET /api/auth/me
+   * Requires: Authorization header with JWT token
+   * Process: Decode JWT, fetch user from database
+   * Output: { "id", "email", "role", "first_name", "last_name" }
+   * Error: 401 if token invalid/expired
+3. POST /api/auth/logout (optional for now)
+   * Just return success (client will delete token)
+Authentication Middleware:
+python
+# Create middleware function that:
+# 1. Extracts token from Authorization header (Bearer token)
+# 2. Verifies JWT token
+# 3. Adds user object to request context (req.user)
+# 4. Returns 401 if token missing/invalid
+# 5. Continues to next handler if valid
+
+
+# Use this middleware on all protected routes
+Frontend (Basic):
+* Login page with email/password form
+* Store JWT token in localStorage
+* Add token to all API requests in Authorization header
+* Redirect to dashboard after successful login
+* Display user name and role in header
+Tech Stack:
+* Backend: FastAPI with python-jose[cryptography] for JWT
+* Database: PostgreSQL with psycopg2 or asyncpg
+* Frontend: React with axios for API calls
+Acceptance Criteria:
+* Can POST to /login with test credentials and receive JWT token
+* Can GET /me with token and receive user info
+* Invalid credentials return 401 error
+* Expired/invalid token returns 401 error
+* Frontend login form works and stores token
+* Can access protected route with valid token
+* Token includes user_id and role in payload
+What NOT to Do Yet:
+* Don't hash passwords (plaintext is fine for now)
+* Don't implement refresh tokens
+* Don't implement password reset
+* Don't implement 2FA
+* Don't implement rate limiting
+* Don't implement CSRF protection
+Security Note: This is intentionally minimal. Password hashing and advanced security will be added in Task 20.
+________________
+
+
+
+
+TASK 2: Database Schema for Core Entities
+TASK 2: Database Schema for Core Entities
+Context: Create the complete database schema for trips, documents, and messages. Each entity must be linked to users for role-based access control.
+Requirements:
+* PostgreSQL database
+* Must reference users table from Task 1
+* Include all foreign key relationships
+* Add indexes for common queries
+Database Schema:
+sql
+-- Trips table
+CREATE TABLE trips (
+    id SERIAL PRIMARY KEY,
+    client_name VARCHAR(255) NOT NULL,
+    pickup_location VARCHAR(255) NOT NULL,
+    dropoff_location VARCHAR(255) NOT NULL,
+    pickup_lat DECIMAL(10, 8),
+    pickup_lng DECIMAL(11, 8),
+    dropoff_lat DECIMAL(10, 8),
+    dropoff_lng DECIMAL(11, 8),
+    scheduled_start TIMESTAMP NOT NULL,
+    scheduled_end TIMESTAMP,
+    actual_start TIMESTAMP,
+    actual_end TIMESTAMP,
+    status VARCHAR(50) DEFAULT 'scheduled', -- 'scheduled', 'in_progress', 'completed', 'cancelled'
+    flight_number VARCHAR(50),
+    airline VARCHAR(100),
+    assigned_agent_id INTEGER REFERENCES users(id),
+    assigned_parent_id INTEGER REFERENCES users(id),
+    assigned_clinician_id INTEGER REFERENCES users(id),
+    created_by_id INTEGER REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- Location tracking table
+CREATE TABLE location_updates (
+    id SERIAL PRIMARY KEY,
+    trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
+    agent_id INTEGER REFERENCES users(id),
+    latitude DECIMAL(10, 8) NOT NULL,
+    longitude DECIMAL(11, 8) NOT NULL,
+    accuracy DECIMAL(10, 2),
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    source VARCHAR(50) DEFAULT 'gps' -- 'gps' or 'flight'
+);
+
+
+-- Documents table
+CREATE TABLE documents (
+    id SERIAL PRIMARY KEY,
+    trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
+    uploaded_by_id INTEGER REFERENCES users(id),
+    filename VARCHAR(255) NOT NULL,
+    file_url VARCHAR(500) NOT NULL,
+    file_type VARCHAR(50),
+    file_size INTEGER,
+    uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- Messages table
+CREATE TABLE messages (
+    id SERIAL PRIMARY KEY,
+    trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
+    sender_id INTEGER REFERENCES users(id),
+    message_text TEXT NOT NULL,
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    read_by_recipient BOOLEAN DEFAULT FALSE
+);
+
+
+-- Client notes table (for dashboard)
+CREATE TABLE client_notes (
+    id SERIAL PRIMARY KEY,
+    trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
+    created_by_id INTEGER REFERENCES users(id),
+    note_text TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+-- Indexes for performance
+CREATE INDEX idx_trips_agent ON trips(assigned_agent_id);
+CREATE INDEX idx_trips_parent ON trips(assigned_parent_id);
+CREATE INDEX idx_trips_clinician ON trips(assigned_clinician_id);
+CREATE INDEX idx_trips_status ON trips(status);
+CREATE INDEX idx_location_trip ON location_updates(trip_id, timestamp DESC);
+CREATE INDEX idx_documents_trip ON documents(trip_id);
+CREATE INDEX idx_messages_trip ON messages(trip_id, sent_at);
+API Endpoints (Read-Only for Testing):
+1. GET /api/trips - List all trips (filtered by user role)
+2. GET /api/trips/:id - Get single trip details
+3. GET /api/trips/:id/documents - Get documents for trip
+4. GET /api/trips/:id/messages - Get messages for trip
+Acceptance Criteria:
+* All tables created successfully
+* Foreign key relationships work (can't assign non-existent user to trip)
+* Can insert test data into all tables
+* Can query trips with user associations
+* Indexes are created
+Test Data to Insert:
+sql
+-- Create a test trip
+INSERT INTO trips (client_name, pickup_location, dropoff_location, scheduled_start, assigned_agent_id, assigned_parent_id, created_by_id)
+VALUES ('John Doe', '123 Main St, Los Angeles, CA', '456 Oak Ave, San Francisco, CA', '2025-11-10 09:00:00', 2, 3, 1);
+________________
+
+
+
+
+TASK 3: Admin Trip Creation
+
+
+
+
+TASK 3: Admin Trip Creation
+Context: Build the admin interface and API to create new transport trips. Admin should be able to assign agents, parents, and clinicians to each trip.
+Requirements:
+* Admin-only access (check role in auth middleware)
+* Form to create trip with all necessary fields
+* API endpoint to save trip to database
+* View list of all created trips
+API Endpoints:
+1. POST /api/trips
+   * Auth: Requires admin role
+   * Input:
+json
+    {
+       "client_name": "John Doe",
+       "pickup_location": "123 Main St, Los Angeles, CA",
+       "dropoff_location": "456 Oak Ave, San Francisco, CA",
+       "pickup_lat": 34.0522,
+       "pickup_lng": -118.2437,
+       "dropoff_lat": 37.7749,
+       "dropoff_lng": -122.4194,
+       "scheduled_start": "2025-11-10T09:00:00Z",
+       "scheduled_end": "2025-11-10T14:00:00Z",
+       "flight_number": "UA1234",
+       "airline": "United Airlines",
+       "assigned_agent_id": 2,
+       "assigned_parent_id": 3,
+       "assigned_clinician_id": 4
+     }
+```
+   - Process: Insert into trips table with created_by_id = admin's user_id
+   - Output: Created trip object with id
+   - Error: 403 if not admin, 400 if validation fails
+
+
+2. **GET /api/trips**
+   - Auth: All roles
+   - Process: 
+     - Admin: Return all trips
+     - Agent: Return trips where assigned_agent_id = user_id
+     - Parent: Return trips where assigned_parent_id = user_id
+     - Clinician: Return trips where assigned_clinician_id = user_id
+   - Output: Array of trip objects
+   - Include: User names for assigned agent/parent/clinician (JOIN query)
+
+
+3. **GET /api/trips/:id**
+   - Auth: All roles (but check access)
+   - Process: 
+     - Check if user has access to this trip (is admin, or is assigned to trip)
+     - Return 403 if no access
+   - Output: Full trip object with all details
+
+
+4. **PUT /api/trips/:id**
+   - Auth: Admin only
+   - Input: Same as POST (partial updates allowed)
+   - Process: Update trip in database
+   - Output: Updated trip object
+
+
+5. **DELETE /api/trips/:id**
+   - Auth: Admin only
+   - Process: Delete trip (cascade will delete related records)
+   - Output: Success message
+
+
+**Frontend - Admin Dashboard:**
+
+
+Create page: `/admin/trips`
+
+
+Components needed:
+1. **Trip List View:**
+   - Table showing all trips
+   - Columns: Client Name, Pickup, Dropoff, Date, Agent, Status, Actions
+   - Click row to view details
+   - "Create Trip" button
+
+
+2. **Create Trip Form:**
+   - Client name (text input)
+   - Pickup location (text input with Google Places autocomplete)
+   - Dropoff location (text input with Google Places autocomplete)
+   - Scheduled start date/time (datetime picker)
+   - Scheduled end date/time (datetime picker)
+   - Flight number (optional text input)
+   - Airline (optional text input)
+   - Assign Agent (dropdown - fetch from GET /api/users?role=agent)
+   - Assign Parent (dropdown - fetch from GET /api/users?role=parent)
+   - Assign Clinician (dropdown - fetch from GET /api/users?role=clinician)
+   - Submit button
+
+
+3. **Helper Endpoint:**
+   - **GET /api/users?role=agent** - Get all users with specific role (admin only)
+
+
+**Acceptance Criteria:**
+- [ ] Admin can access trip creation form
+- [ ] Form validates all required fields
+- [ ] Can select users from dropdowns for assignment
+- [ ] POST to /api/trips creates trip in database
+- [ ] Created trip appears in trip list
+- [ ] Non-admin users get 403 when trying to create trip
+- [ ] Can edit existing trip
+- [ ] Can delete trip
+- [ ] Google Places autocomplete works for addresses (extracts lat/lng)
+
+
+**Tech Notes:**
+- Use Google Places Autocomplete API for address fields
+- Extract latitude/longitude when address is selected
+- Use react-datepicker or similar for datetime selection
+
+
+---
+TASK 4: Role-Based Trip Dashboards
+## TASK 4: Role-Based Trip Dashboards
+
+
+**Context:** Create separate dashboard views for each user role showing only their assigned trips. Each role sees the same trip data but filtered differently.
+
+
+**Requirements:**
+- 4 separate dashboard routes (or one dynamic route based on role)
+- Each role sees only trips they're assigned to
+- Display trip cards/list with key information
+- Click trip to view details (static for now, no live tracking)
+
+
+**Frontend Routes:**
+
+
+1. **`/dashboard`** - Auto-redirect based on role:
+   - Admin → `/admin/trips`
+   - Agent → `/agent/trips`
+   - Parent → `/parent/trips`
+   - Clinician → `/clinician/trips`
+
+
+**Dashboard Layout (Same for All Roles):**
+```
+┌─────────────────────────────────────────┐
+│  Header: Welcome, [First Name] (Role)  │
+│  [Logout Button]                        │
+├─────────────────────────────────────────┤
+│  My Trips                               │
+│                                         │
+│  ┌───────────────────────────────────┐ │
+│  │ Trip Card 1                       │ │
+│  │ Client: John Doe                  │ │
+│  │ Pickup: Los Angeles, CA           │ │
+│  │ Dropoff: San Francisco, CA        │ │
+│  │ Date: Nov 10, 2025 9:00 AM        │ │
+│  │ Status: Scheduled                 │ │
+│  │ [View Details Button]             │ │
+│  └───────────────────────────────────┘ │
+│                                         │
+│  ┌───────────────────────────────────┐ │
+│  │ Trip Card 2                       │ │
+│  │ ...                               │ │
+│  └───────────────────────────────────┘ │
+└─────────────────────────────────────────┘
+```
+
+
+**Trip Detail View (Click Trip Card):**
+
+
+Route: `/trips/:id`
+```
+┌─────────────────────────────────────────┐
+│  [← Back to Dashboard]                  │
+├─────────────────────────────────────────┤
+│  Trip Details                           │
+│                                         │
+│  Client: John Doe                       │
+│  Status: Scheduled                      │
+│                                         │
+│  Pickup:  123 Main St, Los Angeles, CA │
+│  Dropoff: 456 Oak Ave, San Francisco    │
+│  Start:   Nov 10, 2025 9:00 AM         │
+│  End:     Nov 10, 2025 2:00 PM         │
+│                                         │
+│  Flight: UA1234 (United Airlines)       │
+│                                         │
+│  Assigned To:                           │
+│  Agent: Transport Agent                 │
+│  Parent: Parent User                    │
+│  Clinician: Dr Smith                    │
+│                                         │
+│  [Map will go here - Task 7]           │
+│  [Documents will go here - Task 5]     │
+│  [Chat will go here - Task 14]         │
+└─────────────────────────────────────────┘
+API Usage:
+* GET /api/trips (already built in Task 3)
+* Backend filters trips based on role automatically
+* GET /api/trips/:id for detail view
+Access Control Check:
+javascript
+// Middleware on GET /api/trips/:id
+// 1. Get trip from database
+// 2. Check if user has access:
+if (user.role === 'admin') {
+  return trip; // Admin sees all
+} else if (
+  trip.assigned_agent_id === user.id ||
+  trip.assigned_parent_id === user.id ||
+  trip.assigned_clinician_id === user.id
+) {
+  return trip; // User is assigned to this trip
+} else {
+  return 403; // No access
+}
+Acceptance Criteria:
+* Admin dashboard shows ALL trips
+* Agent dashboard shows only trips where they're assigned as agent
+* Parent dashboard shows only trips where they're assigned as parent
+* Clinician dashboard shows only trips where they're assigned as clinician
+* Trip cards display all key information clearly
+* Click trip card navigates to detail view
+* Detail view shows all trip information
+* Attempting to access unauthorized trip returns 403
+* User can logout from header
+Styling Notes:
+* Use status badges (Scheduled=blue, In Progress=green, Completed=gray)
+* Show relative time (e.g., "Starts in 2 days" vs full timestamp)
+* Mobile responsive design
+________________
+
+
+
+
+TASK 5: Document Upload System
+TASK 5: Document Upload System
+Context: Allow users to upload files (PDFs, images, documents) related to a specific trip. All assigned users can view and upload documents for their trips.
+Requirements:
+* File upload to cloud storage (AWS S3, Cloudinary, or local for testing)
+* Support file types: PDF, JPG, PNG, DOCX
+* Max file size: 10MB
+* Trip-isolated storage (documents only visible to assigned users)
+API Endpoints:
+1. POST /api/trips/:id/documents
+   * Auth: Must be assigned to trip (agent, parent, clinician, or admin)
+   * Input: Multipart form data with file
+   * Process:
+      * Verify user has access to this trip
+      * Upload file to storage (S3 or local)
+      * Save document metadata to database
+      * Link to trip_id and uploaded_by_id
+   * Output: Document object with id, filename, url
+   * Error: 403 if no access, 400 if file too large or wrong type
+2. GET /api/trips/:id/documents
+   * Auth: Must be assigned to trip
+   * Process: Fetch all documents for this trip
+   * Output: Array of document objects
+   * Include uploader name (JOIN with users)
+3. GET /api/documents/:id/download
+   * Auth: Must be assigned to trip that owns this document
+   * Process: Generate signed URL or stream file
+   * Output: File download or redirect to S3 URL
+4. DELETE /api/documents/:id
+   * Auth: Admin or user who uploaded it
+   * Process: Delete file from storage and database record
+   * Output: Success message
+Storage Options:
+Option A: AWS S3 (Production)
+python
+# Use boto3 library
+# Bucket structure: trips/{trip_id}/{filename}
+# Generate presigned URLs for downloads (expire in 1 hour)
+Option B: Local Storage (Development)
+python
+# Save to: ./uploads/trips/{trip_id}/{filename}
+# Serve files from /api/documents/:id/download endpoint
+```
+
+
+**Frontend - Document Section in Trip Detail:**
+
+
+Add to trip detail page:
+```
+┌─────────────────────────────────────────┐
+│  Documents                              │
+│                                         │
+│  [📎 Upload Document Button]           │
+│                                         │
+│  ┌─────────────────────────────────┐   │
+│  │ 📄 consent_form.pdf             │   │
+│  │ Uploaded by: Admin User         │   │
+│  │ Nov 1, 2025 2:30 PM             │   │
+│  │ [Download] [Delete if owner]    │   │
+│  └─────────────────────────────────┘   │
+│                                         │
+│  ┌─────────────────────────────────┐   │
+│  │ 🖼️ client_photo.jpg             │   │
+│  │ Uploaded by: Parent User        │   │
+│  │ Nov 2, 2025 10:15 AM            │   │
+│  │ [Download]                      │   │
+│  └─────────────────────────────────┘   │
+└─────────────────────────────────────────┘
+Upload Modal:
+* File picker (drag-and-drop optional)
+* Show file size and type validation
+* Progress bar during upload
+* Success/error messages
+Acceptance Criteria:
+* Can upload PDF file to trip
+* Can upload image (JPG/PNG) to trip
+* Uploaded file appears in document list immediately
+* Shows uploader name and timestamp
+* Can download document
+* Downloaded file is correct and not corrupted
+* Can delete own uploaded document
+* Admin can delete any document
+* Non-assigned users cannot upload to trip (403 error)
+* Files over 10MB rejected with clear error
+* Unsupported file types rejected
+* Documents from Trip A don't appear in Trip B
+Tech Stack:
+* Backend: multer (Node) or python-multipart (FastAPI) for file uploads
+* Storage: AWS S3 with boto3 or local filesystem
+* Frontend: File input or drag-drop library (react-dropzone)
+
+
+
+
+TASK 6: Role-Based Document Access Control
+TASK 6: Role-Based Document Access Control
+Context: Ensure documents are truly trip-isolated. Add comprehensive tests to verify users cannot access documents from trips they're not assigned to.
+Requirements:
+* Tighten security on document endpoints
+* Add access control checks
+* Test cross-trip access prevention
+* Add audit logging for document access
+Security Checks to Implement:
+For every document endpoint:
+python
+def check_document_access(user_id, document_id):
+    # 1. Get document from database
+    doc = db.documents.get(document_id)
+    
+    # 2. Get the trip this document belongs to
+    trip = db.trips.get(doc.trip_id)
+    
+    # 3. Check if user has access to this trip
+    if user.role == 'admin':
+        return True
+    
+    if (trip.assigned_agent_id == user_id or 
+        trip.assigned_parent_id == user_id or 
+        trip.assigned_clinician_id == user_id):
+        return True
+    
+    return False  # Access denied
+Test Scenarios to Implement:
+Create test script or unit tests:
+1. Test: Agent can only access own trip documents
+   * Create Trip A (assigned to Agent 1)
+   * Create Trip B (assigned to Agent 2)
+   * Upload document to Trip A
+   * Agent 2 tries to GET Trip A document → Should get 403
+2. Test: Parent cannot access other parent's documents
+   * Create Trip A (assigned to Parent 1)
+   * Create Trip B (assigned to Parent 2)
+   * Upload document to Trip A
+   * Parent 2 tries to download Trip A document → Should get 403
+3. Test: Admin can access all documents
+   * Admin tries to access documents from any trip → Should succeed
+4. Test: Cannot guess document IDs
+   * Try accessing /api/documents/999999/download (non-existent) → 404
+   * Try accessing valid document from different trip → 403
+Audit Logging:
+Add new table:
+sql
+CREATE TABLE document_access_log (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER REFERENCES documents(id),
+    user_id INTEGER REFERENCES users(id),
+    action VARCHAR(50), -- 'view', 'download', 'upload', 'delete'
+    ip_address VARCHAR(50),
+    accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    success BOOLEAN
+);
+Log every document action:
+python
+# After document access
+log_access(
+    document_id=doc.id,
+    user_id=user.id,
+    action='download',
+    ip=request.ip,
+    success=True
+)
+Acceptance Criteria:
+* All test scenarios pass
+* 403 errors returned for unauthorized access attempts
+* Admin can access all documents across all trips
+* Access logs are created for all document actions
+* Can query audit log to see who accessed what document
+* Error messages don't leak information (don't say "document exists but you can't access it")
+________________
+
+
+
+
+TASK 7: Static Map Display
+TASK 7: Static Map Display
+Context: Add Google Maps to trip detail view showing pickup and dropoff locations as markers, with a route drawn between them. This is static (no live tracking yet).
+Requirements:
+* Google Maps JavaScript API
+* Display pickup location (green marker)
+* Display dropoff location (red marker)
+* Draw route between pickup and dropoff
+* Auto-zoom to fit both markers
+Google Maps Setup:
+1. Get API key from Google Cloud Console
+2. Enable these APIs:
+   * Maps JavaScript API
+   * Directions API
+   * Places API (for Task 3 autocomplete)
+3. Add to frontend HTML:
+html
+<script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places"></script>
+Frontend - Map Component:
+Add to trip detail page:
+jsx
+// MapComponent.jsx
+import React, { useEffect, useRef } from 'react';
+
+
+const TripMap = ({ pickup, dropoff }) => {
+  const mapRef = useRef(null);
+  
+  useEffect(() => {
+    // Initialize map
+    const map = new google.maps.Map(mapRef.current, {
+      zoom: 10,
+      center: pickup
+    });
+    
+    // Add pickup marker (green)
+    const pickupMarker = new google.maps.Marker({
+      position: pickup,
+      map: map,
+      label: 'P',
+      title: 'Pickup Location',
+      icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png'
+    });
+    
+    // Add dropoff marker (red)
+    const dropoffMarker = new google.maps.Marker({
+      position: dropoff,
+      map: map,
+      label: 'D',
+      title: 'Dropoff Location',
+      icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
+    });
+    
+    // Draw route
+    const directionsService = new google.maps.DirectionsService();
+    const directionsRenderer = new google.maps.DirectionsRenderer({
+      map: map,
+      suppressMarkers: true // We have custom markers
+    });
+    
+    directionsService.route({
+      origin: pickup,
+      destination: dropoff,
+      travelMode: 'DRIVING'
+    }, (result, status) => {
+      if (status === 'OK') {
+        directionsRenderer.setDirections(result);
+      }
+    });
+    
+    // Auto-fit bounds to show both markers
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend(pickup);
+    bounds.extend(dropoff);
+    map.fitBounds(bounds);
+    
+  }, [pickup, dropoff]);
+  
+  return <div ref={mapRef} style={{ width: '100%', height: '400px' }} />;
+};
+
+
+export default TripMap;
+Usage in Trip Detail:
+jsx
+<TripMap 
+  pickup={{ lat: trip.pickup_lat, lng: trip.pickup_lng }}
+  dropoff={{ lat: trip.dropoff_lat, lng: trip.dropoff_lng }}
+/>
+```
+
+
+**Acceptance Criteria:**
+- [ ] Map displays on trip detail page
+- [ ] Pickup marker (green) appears at correct location
+- [ ] Dropoff marker (red) appears at correct location
+- [ ] Route line is drawn between markers
+- [ ] Map automatically zooms to show both locations
+- [ ] Markers have labels ('P' and 'D')
+- [ ] Clicking markers shows location name (tooltip)
+- [ ] Map is responsive (works on mobile)
+
+
+**Styling Notes:**
+- Map height: 400px on desktop, 300px on mobile
+- Add border/shadow to map container
+- Show address labels below markers
+
+
+---
+
+
+
+
+
+
+TASK 8: Mobile Location Collection (Agent App)
+## TASK 8: Mobile Location Collection (Agent App)
+
+
+**Context:** Build the mobile app (or PWA) that transport agents use to share their GPS location during active trips. This is the foundation for live tracking.
+
+
+**Requirements:**
+- React Native app (or PWA for testing)
+- Agent logs in and sees assigned trips
+- "Start Trip" button to begin location sharing
+- Send GPS coordinates to backend every 30 seconds
+- "End Trip" button to stop sharing
+
+
+**Mobile App Structure:**
+
+
+**Screen 1: Login**
+- Same as web login
+- Store JWT token in AsyncStorage (React Native) or localStorage (PWA)
+
+
+**Screen 2: My Trips**
+- List of assigned trips (status = 'scheduled' or 'in_progress')
+- Show trip details: client name, pickup, dropoff, time
+- "Start Trip" button for scheduled trips
+
+
+**Screen 3: Active Trip**
+```
+┌─────────────────────────────────────────┐
+│  Trip Active                            │
+│                                         │
+│  Client: John Doe                       │
+│  Destination: San Francisco, CA         │
+│                                         │
+│  📍 Location Sharing Active             │
+│  Last Update: 2 seconds ago             │
+│                                         │
+│  Current Location:                      │
+│  Los Angeles, CA                        │
+│                                         │
+│  [End Trip Button]                      │
+└─────────────────────────────────────────┘
+Location Tracking Logic:
+javascript
+// When "Start Trip" pressed:
+
+
+1. Update trip status to 'in_progress' (PUT /api/trips/:id)
+2. Request location permissions
+3. Start location tracking:
+   - Get GPS coordinates every 30 seconds
+   - POST to /api/trips/:id/location
+4. Show "Active Trip" screen
+5. Run in background (iOS: background modes, Android: foreground service)
+
+
+// When "End Trip" pressed:
+1. Stop location tracking
+2. Update trip status to 'completed'
+3. Return to trip list
+Geolocation Code:
+React Native:
+javascript
+import Geolocation from '@react-native-community/geolocation';
+
+
+const startTracking = () => {
+  const watchId = Geolocation.watchPosition(
+    (position) => {
+      const { latitude, longitude, accuracy } = position.coords;
+      sendLocationToBackend(latitude, longitude, accuracy);
+    },
+    (error) => console.error(error),
+    {
+      enableHighAccuracy: true,
+      distanceFilter: 10, // Update every 10 meters
+      interval: 30000, // 30 seconds
+    }
+  );
+  
+  return watchId;
+};
+
+
+const sendLocationToBackend = async (lat, lng, accuracy) => {
+  await fetch(`${API_URL}/api/trips/${tripId}/location`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      latitude: lat,
+      longitude: lng,
+      accuracy: accuracy,
+      timestamp: new Date().toISOString()
+    })
+  });
+};
+PWA (Web Geolocation API):
+javascript
+const startTracking = () => {
+  if (!navigator.geolocation) {
+    alert('Geolocation not supported');
+    return;
+  }
+  
+  const watchId = navigator.geolocation.watchPosition(
+    (position) => {
+      const { latitude, longitude, accuracy } = position.coords;
+      sendLocationToBackend(latitude, longitude, accuracy);
+    },
+    (error) => console.error(error),
+    {
+      enableHighAccuracy: true,
+      maximumAge: 0,
+      timeout: 5000
+    }
+  );
+  
+  // Also set interval as backup (watchPosition can be unreliable)
+  const intervalId = setInterval(() => {
+    navigator.geolocation.getCurrentPosition((position) => {
+      const { latitude, longitude, accuracy } = position.coords;
+      sendLocationToBackend(latitude, longitude, accuracy);
+    });
+  }, 30000); // 30 seconds
+  
+  return { watchId, intervalId };
+};
+Permissions:
+iOS (Info.plist):
+xml
+<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+<string>We need your location to track transport progress</string>
+<key>NSLocationWhenInUseUsageDescription</key>
+<string>We need your location to track transport progress</string>
+Android (AndroidManifest.xml):
+xml
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+Acceptance Criteria:
+* Agent can log into mobile app
+* Sees list of assigned trips
+* Can start trip (status changes to 'in_progress')
+* Location permissions requested
+* GPS coordinates sent to backend every 30 seconds
+* Can see "last update" timestamp in UI
+* Can end trip (status changes to 'completed')
+* Location tracking stops when trip ended
+* Works in background (app can be minimized)
+* Battery usage is reasonable
+Tech Stack:
+* React Native with Expo (easier setup) or bare React Native
+* @react-native-community/geolocation for location
+* axios for API calls
+* AsyncStorage for token storage
+Testing:
+* Test with real device (simulators have fake GPS)
+* Drive around block and verify locations are being sent
+* Check backend database for location_updates records
+
+
+
+
+TASK 9: Backend Location Storage
+TASK 9: Backend Location Storage
+Context: Create API endpoint to receive GPS coordinates from mobile agents and store them in the database. This is the backend half of the tracking system.
+Requirements:
+* API endpoint to receive location updates
+* Validate agent has access to this trip
+* Store location with timestamp
+* Return success/error response
+API Endpoint:
+POST /api/trips/:id/location
+Request:
+json
+{
+  "latitude": 34.0522,
+  "longitude": -118.2437,
+  "accuracy": 10.5,
+  "timestamp": "2025-11-04T16:30:00Z"
+}
+Auth: Must be agent assigned to this trip
+Process:
+python
+def post_location(trip_id, request):
+    # 1. Verify user is authenticated
+    user = get_current_user(request)
+    
+    # 2. Get trip from database
+    trip = db.trips.get(trip_id)
+    if not trip:
+        return 404
+    
+    # 3. Verify user is the assigned agent
+    if trip.assigned_agent_id != user.id and user.role != 'admin':
+        return 403  # Only assigned agent can update location
+    
+    # 4. Validate input
+    if not (-90 <= request.latitude <= 90):
+        return 400, "Invalid latitude"
+    if not (-180 <= request.longitude <= 180):
+        return 400, "Invalid longitude"
+    
+    # 5. Insert location update
+    location = db.location_updates.create({
+        'trip_id': trip_id,
+        'agent_id': user.id,
+        'latitude': request.latitude,
+        'longitude': request.longitude,
+        'accuracy': request.accuracy,
+        'timestamp': request.timestamp or datetime.now(),
+        'source': 'gps'
+    })
+    
+    # 6. Update trip status if not already in progress
+    if trip.status == 'scheduled':
+        db.trips.update(trip_id, {
+            'status': 'in_progress',
+            'actual_start': datetime.now()
+        })
+    
+    return 200, {'success': True, 'location_id': location.id}
+Additional Endpoints:
+GET /api/trips/:id/location/latest
+* Auth: Must be assigned to trip (any role)
+* Returns: Most recent location update for this trip
+* Response:
+json
+{
+  "latitude": 34.0522,
+  "longitude": -118.2437,
+  "accuracy": 10.5,
+  "timestamp": "2025-11-04T16:30:00Z",
+  "seconds_ago": 45
+}
+GET /api/trips/:id/location/history
+* Auth: Must be assigned to trip (any role)
+* Query params: ?limit=100&since=2025-11-04T10:00:00Z
+* Returns: Array of location updates (for drawing path)
+* Response:
+json
+{
+  "locations": [
+    {
+      "latitude": 34.0522,
+      "longitude": -118.2437,
+      "timestamp": "2025-11-04T16:30:00Z"
+    },
+    // ... more locations
+  ]
+}
+Database Optimization:
+Add indexes (if not already in schema):
+sql
+CREATE INDEX idx_location_trip_time ON location_updates(trip_id, timestamp DESC);
+CREATE INDEX idx_location_latest ON location_updates(trip_id, timestamp DESC) WHERE source = 'gps';
+Acceptance Criteria:
+* Can POST location data to endpoint
+* Location is saved to database with correct trip_id
+* Timestamp is stored (use server time if not provided)
+* Only assigned agent can post location (403 for others)
+* Invalid coordinates rejected (400 error)
+* GET /latest returns most recent location
+* GET /history returns array of locations
+* Trip status auto-updates to 'in_progress' on first location
+* Can query location history with time range
+* Response time is fast (< 100ms)
+Error Handling:
+* 401: No auth token
+* 403: Not assigned agent for this trip
+* 404: Trip doesn't exist
+* 400: Invalid coordinates
+* 500: Database error
+Testing:
+bash
+# Test POST location
+curl -X POST http://localhost:8000/api/trips/1/location \
+  -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"latitude": 34.0522, "longitude": -118.2437, "accuracy": 10}'
+
+
+# Test GET latest
+curl http://localhost:8000/api/trips/1/location/latest \
+  -H "Authorization: Bearer $PARENT_TOKEN"
+
+
+
+
+TASK 10: Display Live Location (Polling)
+TASK 10: Display Live Location (Polling)
+Context: Show the transport agent's current location on the map in real-time for parents, clinicians, and admins. Start with simple polling (fetch every 10 seconds). WebSocket upgrade comes later.
+Requirements:
+* Update map marker position as agent moves
+* Poll backend every 10 seconds for latest location
+* Show "last updated X seconds ago"
+* Display moving vehicle icon instead of static marker
+* Draw breadcrumb trail of past locations
+Frontend - Live Tracking Component:
+Update the TripMap component from Task 7:
+jsx
+import React, { useEffect, useRef, useState } from 'react';
+
+
+const LiveTripMap = ({ tripId, pickup, dropoff, isLive }) => {
+  const mapRef = useRef(null);
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const [locationHistory, setLocationHistory] = useState([]);
+  const [lastUpdate, setLastUpdate] = useState(null);
+  const agentMarkerRef = useRef(null);
+  const pathLineRef = useRef(null);
+  
+  // Fetch latest location
+  const fetchLocation = async () => {
+    try {
+      const response = await fetch(`/api/trips/${tripId}/location/latest`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await response.json();
+      
+      if (data.latitude && data.longitude) {
+        setCurrentLocation({
+          lat: data.latitude,
+          lng: data.longitude
+        });
+        setLastUpdate(new Date(data.timestamp));
+        
+        // Add to history for breadcrumb trail
+        setLocationHistory(prev => [...prev, {
+          lat: data.latitude,
+          lng: data.longitude
+        }]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch location:', error);
+    }
+  };
+  
+  // Poll every 10 seconds
+  useEffect(() => {
+    if (!isLive) return;
+    
+    // Fetch immediately
+    fetchLocation();
+    
+    // Then poll every 10 seconds
+    const intervalId = setInterval(fetchLocation, 10000);
+    
+    return () => clearInterval(intervalId);
+  }, [tripId, isLive]);
+  
+  // Initialize map
+  useEffect(() => {
+    const map = new google.maps.Map(mapRef.current, {
+      zoom: 12,
+      center: pickup
+    });
+    
+    // Pickup marker (green)
+    new google.maps.Marker({
+      position: pickup,
+      map: map,
+      label: 'P',
+      icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png'
+    });
+    
+    // Dropoff marker (red)
+    new google.maps.Marker({
+      position: dropoff,
+      map: map,
+      label: 'D',
+      icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
+    });
+    
+    // Create agent marker (car icon)
+    agentMarkerRef.current = new google.maps.Marker({
+      map: map,
+      icon: {
+        url: 'https://maps.google.com/mapfiles/kml/shapes/cabs.png',
+        scaledSize: new google.maps.Size(40, 40)
+      },
+      title: 'Transport Agent'
+    });
+    
+    // Create path line for breadcrumbs
+    pathLineRef.current = new google.maps.Polyline({
+      map: map,
+      strokeColor: '#4285F4',
+      strokeOpacity: 0.7,
+      strokeWeight: 3
+    });
+    
+    // Store map reference
+    mapRef.current = map;
+    
+  }, [pickup, dropoff]);
+  
+  // Update agent marker position when location changes
+  useEffect(() => {
+    if (!currentLocation || !agentMarkerRef.current) return;
+    
+    // Animate marker to new position
+    agentMarkerRef.current.setPosition(currentLocation);
+    
+    // Update breadcrumb trail
+    if (pathLineRef.current) {
+      pathLineRef.current.setPath(locationHistory);
+    }
+    
+    // Center map on agent
+    if (mapRef.current) {
+      mapRef.current.panTo(currentLocation);
+    }
+    
+  }, [currentLocation, locationHistory]);
+  
+  return (
+    <div>
+      <div ref={mapRef} style={{ width: '100%', height: '400px' }} />
+      
+      {lastUpdate && (
+        <div style={{ marginTop: '10px', color: '#666' }}>
+          Last updated: {getTimeAgo(lastUpdate)}
+        </div>
+      )}
+      
+      {isLive && (
+        <div style={{ marginTop: '5px', color: '#4CAF50' }}>
+          🟢 Live tracking active
+        </div>
+      )}
+    </div>
+  );
+};
+
+
+// Helper function
+function getTimeAgo(date) {
+  const seconds = Math.floor((new Date() - date) / 1000);
+  
+  if (seconds < 60) return `${seconds} seconds ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} hours ago`;
+}
+
+
+export default LiveTripMap;
+Usage in Trip Detail:
+jsx
+<LiveTripMap 
+  tripId={trip.id}
+  pickup={{ lat: trip.pickup_lat, lng: trip.pickup_lng }}
+  dropoff={{ lat: trip.dropoff_lat, lng: trip.dropoff_lng }}
+  isLive={trip.status === 'in_progress'}
+/>
+Status Indicator:
+Add a status badge to trip detail header:
+jsx
+{trip.status === 'in_progress' && (
+  <div className="live-badge">
+    🟢 Live Tracking Active
+  </div>
+)}
+
+
+{trip.status === 'completed' && (
+  <div className="completed-badge">
+    ✓ Trip Completed
+  </div>
+)}
+Acceptance Criteria:
+* Map shows static pickup/dropoff markers
+* When trip is 'in_progress', agent's location appears as car icon
+* Car icon position updates every 10 seconds
+* "Last updated X seconds ago" displays and updates
+* Breadcrumb trail (blue line) shows agent's path
+* Map auto-centers on agent location
+* "Live tracking active" indicator shows when trip in progress
+* Polling stops when trip is completed
+* Works for parent, clinician, and admin simultaneously
+* No errors if agent hasn't sent location yet
+Performance Notes:
+* Cache map instance to avoid re-creating
+* Smoothly animate marker movement (use CSS transitions or GSAP)
+* Limit breadcrumb trail to last 100 points
+* Debounce map panning to avoid jitter
+
+
+
+
+
+
+TASK 11: Upgrade to WebSocket (Real-Time)
+TASK 11: Upgrade to WebSocket (Real-Time)
+Context: Replace polling with WebSocket connections for instant location updates. This eliminates the 10-second delay and reduces server load.
+Requirements:
+* WebSocket server (Socket.io or native WebSocket)
+* Client subscribes to trip updates
+* Server pushes location updates immediately
+* Fallback to polling if WebSocket fails
+Backend - WebSocket Server:
+Using Socket.io (Recommended):
+python
+# Install: pip install python-socketio
+
+
+from socketio import AsyncServer, ASGIApp
+from fastapi import FastAPI
+
+
+app = FastAPI()
+sio = AsyncServer(async_mode='asgi', cors_allowed_origins='*')
+socket_app = ASGIApp(sio, app)
+
+
+# Store connected clients by trip_id
+connected_clients = {}  # { trip_id: [sid1, sid2, ...] }
+
+
+@sio.event
+async def connect(sid, environ):
+    print(f'Client connected: {sid}')
+
+
+@sio.event
+async def disconnect(sid):
+    print(f'Client disconnected: {sid}')
+    # Remove from all rooms
+    for trip_id, clients in connected_clients.items():
+        if sid in clients:
+            clients.remove(sid)
+
+
+@sio.event
+async def subscribe_trip(sid, data):
+    """Client subscribes to updates for a specific trip"""
+    trip_id = data['trip_id']
+    token = data['token']
+    
+    # Verify token and access to trip
+    user = verify_jwt(token)
+    trip = db.trips.get(trip_id)
+    
+    if not has_trip_access(user, trip):
+        await sio.emit('error', {'message': 'Access denied'}, to=sid)
+        return
+    
+    # Add to room for this trip
+    await sio.enter_room(sid, f'trip_{trip_id}')
+    
+    if trip_id not in connected_clients:
+        connected_clients[trip_id] = []
+    connected_clients[trip_id].append(sid)
+    
+    print(f'Client {sid} subscribed to trip {trip_id}')
+    
+    # Send current location immediately
+    latest_location = db.location_updates.get_latest(trip_id)
+    if latest_location:
+        await sio.emit('location_update', {
+            'latitude': latest_location.latitude,
+            'longitude': latest_location.longitude,
+            'timestamp': latest_location.timestamp.isoformat()
+        }, to=sid)
+
+
+@sio.event
+async def unsubscribe_trip(sid, data):
+    """Client unsubscribes from trip updates"""
+    trip_id = data['trip_id']
+    await sio.leave_room(sid, f'trip_{trip_id}')
+    
+    if trip_id in connected_clients and sid in connected_clients[trip_id]:
+        connected_clients[trip_id].remove(sid)
+
+
+# Function to broadcast location update to all subscribers
+async def broadcast_location_update(trip_id, location_data):
+    """Called when new location is received via POST /api/trips/:id/location"""
+    await sio.emit('location_update', {
+        'latitude': location_data['latitude'],
+        'longitude': location_data['longitude'],
+        'accuracy': location_data['accuracy'],
+        'timestamp': location_data['timestamp']
+    }, room=f'trip_{trip_id}')
+
+
+# Update the POST location endpoint to broadcast
+@app.post('/api/trips/{trip_id}/location')
+async def post_location(trip_id: int, location: LocationUpdate):
+    # ... existing validation and save logic ...
+    
+    # Save to database
+    db.location_updates.create(location_data)
+    
+    # Broadcast to WebSocket clients
+    await broadcast_location_update(trip_id, location_data)
+    
+    return {'success': True}
+Frontend - WebSocket Client:
+jsx
+import { useEffect, useRef, useState } from 'react';
+import { io } from 'socket.io-client';
+
+
+const LiveTripMap = ({ tripId, pickup, dropoff, isLive }) => {
+  const [currentLocation, setCurrentLocation] = useState(null);
+  const socketRef = useRef(null);
+  
+  useEffect(() => {
+    if (!isLive) return;
+    
+    // Connect to WebSocket server
+    const socket = io('http://localhost:8000', {
+      transports: ['websocket'],
+      auth: {
+        token: localStorage.getItem('auth_token')
+      }
+    });
+    
+    socketRef.current = socket;
+    
+    // Subscribe to this trip's updates
+    socket.emit('subscribe_trip', {
+      trip_id: tripId,
+      token: localStorage.getItem('auth_token')
+    });
+    
+    // Listen for location updates
+    socket.on('location_update', (data) => {
+      console.log('Received location update:', data);
+      setCurrentLocation({
+        lat: data.latitude,
+        lng: data.longitude
+      });
+      setLastUpdate(new Date(data.timestamp));
+    });
+    
+    // Handle errors
+    socket.on('error', (error) => {
+      console.error('WebSocket error:', error);
+      // Fallback to polling
+      startPolling();
+    });
+    
+    // Cleanup on unmount
+    return () => {
+      socket.emit('unsubscribe_trip', { trip_id: tripId });
+      socket.disconnect();
+    };
+    
+  }, [tripId, isLive]);
+  
+  // Fallback polling function (from Task 10)
+  const startPolling = () => {
+    const intervalId = setInterval(fetchLocation, 10000);
+    return () => clearInterval(intervalId);
+  };
+  
+  // ... rest of map rendering logic from Task 10 ...
+};
+Connection Status Indicator:
+jsx
+const [connectionStatus, setConnectionStatus] = useState('connecting');
+
+
+socket.on('connect', () => {
+  setConnectionStatus('connected');
+});
+
+
+socket.on('disconnect', () => {
+  setConnectionStatus('disconnected');
+});
+
+
+// In UI:
+<div className={`status-${connectionStatus}`}>
+  {connectionStatus === 'connected' && '🟢 Live'}
+  {connectionStatus === 'disconnected' && '🔴 Offline'}
+  {connectionStatus === 'connecting' && '🟡 Connecting...'}
+</div>
+Acceptance Criteria:
+* WebSocket connection established when trip page loads
+* Client subscribes to trip updates on connect
+* Location updates appear instantly (< 1 second delay)
+* Multiple clients can watch same trip simultaneously
+* Connection status indicator shows current state
+* Falls back to polling if WebSocket unavailable
+* Cleans up connections when leaving page
+* Only users with access to trip can subscribe
+* No location updates leak to wrong trips
+* Server handles client disconnects gracefully
+Testing:
+1. Open trip in two browser windows
+2. Start trip in mobile app
+3. Verify both windows update simultaneously
+4. Close one window, verify other still works
+5. Disconnect internet, verify fallback to polling
+Performance:
+* Test with 10+ concurrent clients
+* Monitor server memory/CPU usage
+* Verify no memory leaks from orphaned connections
+________________
+
+
+
+
+TASK 12: Flight API Integration
+TASK 12: Flight API Integration
+Context: When transport involves a flight, automatically fetch and display live flight status (gate, delays, ETA) from aviation API.
+Requirements:
+* Admin adds flight number when creating trip
+* Backend periodically fetches flight status
+* Display flight info instead of GPS when agent is on flight
+* Resume GPS tracking after landing
+Flight API Options:
+Option A: AviationStack (Recommended - Free tier available)
+* Free: 100 requests/month
+* Endpoint: http://api.aviationstack.com/v1/flights
+* Good for testing and small scale
+Option B: FlightAware (More reliable, paid)
+* More accurate
+* Better for production
+* Real-time updates
+Setup:
+1. Sign up at https://aviationstack.com
+2. Get API key
+3. Store in environment variables
+Backend - Flight Tracking:
+python
+import requests
+from datetime import datetime, timedelta
+
+
+AVIATION_STACK_API_KEY = os.getenv('AVIATION_STACK_API_KEY')
+
+
+def fetch_flight_status(flight_number):
+    """
+    Fetch current status of a flight
+    Returns: dict with flight info or None if not found
+    """
+    url = 'http://api.aviationstack.com/v1/flights'
+    params = {
+        'access_key': AVIATION_STACK_API_KEY,
+        'flight_iata': flight_number  # e.g., 'UA1234'
+    }
+    
+    try:
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        if data.get('data') and len(data['data']) > 0:
+            flight = data['data'][0]
+            
+            return {
+                'flight_number': flight['flight']['iata'],
+                'airline': flight['airline']['name'],
+                'status': flight['flight_status'],  # 'scheduled', 'active', 'landed'
+                'departure_airport': flight['departure']['airport'],
+                'departure_gate': flight['departure']['gate'],
+                'departure_time': flight['departure']['actual'] or flight['departure']['scheduled'],
+                'arrival_airport': flight['arrival']['airport'],
+                'arrival_gate': flight['arrival']['gate'],
+                'arrival_time': flight['arrival']['actual'] or flight['arrival']['estimated'],
+                'aircraft_lat': flight.get('live', {}).get('latitude'),
+                'aircraft_lng': flight.get('live', {}).get('longitude'),
+                'aircraft_altitude': flight.get('live', {}).get('altitude'),
+                'aircraft_speed': flight.get('live', {}).get('speed_horizontal')
+            }
+    except Exception as e:
+        print(f'Failed to fetch flight status: {e}')
+        return None
+
+
+# Background task to update flight info
+async def update_flight_tracking(trip_id):
+    """
+    Periodically update flight status for active trips
+    Run this every 5 minutes
+    """
+    trip = db.trips.get(trip_id)
+    
+    if not trip.flight_number:
+        return
+    
+    # Only track if trip is in progress and GPS is stale
+    if trip.status != 'in_progress':
+        return
+    
+    latest_gps = db.location_updates.get_latest(trip_id, source='gps')
+    gps_age = (datetime.now() - latest_gps.timestamp).seconds if latest_gps else 999999
+    
+    # If GPS is older than 5 minutes, switch to flight tracking
+    if gps_age > 300:
+        flight_info = fetch_flight_status(trip.flight_number)
+        
+        if flight_info and flight_info['aircraft_lat']:
+            # Save flight position as location update
+            db.location_updates.create({
+                'trip_id': trip_id,
+                'agent_id': trip.assigned_agent_id,
+                'latitude': flight_info['aircraft_lat'],
+                'longitude': flight_info['aircraft_lng'],
+                'accuracy': 1000,  # Flight tracking less accurate
+                'timestamp': datetime.now(),
+                'source': 'flight'
+            })
+            
+            # Broadcast to WebSocket clients
+            await broadcast_location_update(trip_id, {
+                'latitude': flight_info['aircraft_lat'],
+                'longitude': flight_info['aircraft_lng'],
+                'source': 'flight',
+                'flight_info': flight_info
+            })
+
+
+# Scheduler to run flight updates
+from apscheduler.schedulers.background import BackgroundScheduler
+
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(
+    func=lambda: asyncio.run(update_all_flights()),
+    trigger='interval',
+    minutes=5
+)
+scheduler.start()
+
+
+async def update_all_flights():
+    """Update flight tracking for all active trips"""
+    active_trips = db.trips.get_all(status='in_progress', has_flight=True)
+    for trip in active_trips:
+        await update_flight_tracking(trip.id)
+API Endpoint:
+GET /api/trips/:id/flight
+* Auth: Must be assigned to trip
+* Returns: Current flight status
+* Response:
+json
+{
+  "flight_number": "UA1234",
+  "airline": "United Airlines",
+  "status": "active",
+  "departure_airport": "LAX - Los Angeles Intl",
+  "departure_gate": "52B",
+  "departure_time": "2025-11-10T09:30:00Z",
+  "arrival_airport": "SFO - San Francisco Intl",
+  "arrival_gate": "28A",
+  "arrival_time": "2025-11-10T11:45:00Z",
+  "current_position": {
+    "latitude": 36.1234,
+    "longitude": -120.5678,
+    "altitude": 35000,
+    "speed": 450
+  }
+}
+Frontend - Flight Display:
+Update LiveTripMap to handle flight mode:
+jsx
+const [flightInfo, setFlightInfo] = useState(null);
+const [trackingMode, setTrackingMode] = useState('gps'); // 'gps' or 'flight'
+
+
+// Determine tracking mode based on location source
+useEffect(() => {
+  if (currentLocation?.source === 'flight') {
+    setTrackingMode('flight');
+    fetchFlightInfo();
+  } else {
+    setTrackingMode('gps');
+  }
+}, [currentLocation]);
+
+
+const fetchFlightInfo = async () => {
+  const response = await fetch(`/api/trips/${tripId}/flight`);
+  const data = await response.json();
+  setFlightInfo(data);
+};
+
+
+// In UI:
+{trackingMode === 'flight' && flightInfo && (
+  <div className="flight-info-card">
+    <h3>✈️ Flight Tracking</h3>
+    <div>
+      <strong>{flightInfo.flight_number}</strong> - {flightInfo.airline}
+    </div>
+    <div className="flight-status">
+      Status: <span className={`status-${flightInfo.status}`}>
+        {flightInfo.status}
+      </span>
+    </div>
+    <div className="flight-route">
+      <div>
+        <strong>Departure:</strong> {flightInfo.departure_airport}<br/>
+        Gate: {flightInfo.departure_gate}<br/>
+        Time: {formatTime(flightInfo.departure_time)}
+      </div>
+      <div style={{margin: '10px 0'}}>→</div>
+      <div>
+        <strong>Arrival:</strong> {flightInfo.arrival_airport}<br/>
+        Gate: {flightInfo.arrival_gate}<br/>
+        ETA: {formatTime(flightInfo.arrival_time)}
+      </div>
+    </div>
+    {flightInfo.current_position && (
+      <div className="flight-position">
+        Altitude: {flightInfo.current_position.altitude}ft<br/>
+        Speed: {flightInfo.current_position.speed}mph
+      </div>
+    )}
+  </div>
+)}
+
+
+{trackingMode === 'gps' && (
+  <div className="gps-tracking-indicator">
+    📍 GPS Tracking Active
+  </div>
+)}
+Acceptance Criteria:
+* Admin can add flight number when creating trip
+* Flight status fetched from API successfully
+* Map shows airplane icon during flight (instead of car)
+* Flight info card displays gate, times, status
+* Aircraft position updates on map every 5 minutes
+* Automatically switches from GPS to flight tracking when GPS goes stale (>5 min)
+* Automatically switches back to GPS when agent lands and resumes sending location
+* Handles cases where flight not found in API (show error gracefully)
+* Free tier API limits respected (cache results)
+Edge Cases:
+* Flight delayed: Show updated ETA
+* Flight canceled: Show "Flight Canceled" status
+* Flight landed: Switch back to GPS tracking
+* Multiple flights: Track correct segment of journey
+Cost Management:
+* Cache flight status for 5 minutes (don't query every second)
+* Only query for trips that are actually in progress
+* Stop querying after flight lands
+________________
+
+
+
+
+
+
+TASK 13: Auto-Switch GPS ↔ Flight Logic
+TASK 13: Auto-Switch GPS ↔ Flight Logic
+Context: Automatically detect when to switch between GPS tracking (driving) and flight tracking (on plane) without manual intervention.
+Requirements:
+* Detect when GPS stops updating (agent boarded plane)
+* Switch to flight tracking if flight number exists
+* Detect when GPS resumes (agent landed)
+* Switch back to GPS tracking
+* Handle edge cases (no flight number, GPS intermittent)
+Detection Logic:
+python
+def determine_tracking_mode(trip_id):
+    """
+    Decide whether to use GPS or flight tracking
+    Returns: 'gps', 'flight', or 'unknown'
+    """
+    trip = db.trips.get(trip_id)
+    
+    # Get latest GPS location
+    latest_gps = db.location_updates.get_latest(
+        trip_id=trip_id,
+        source='gps'
+    )
+    
+    # Calculate how long since last GPS update
+    if latest_gps:
+        gps_age_seconds = (datetime.now() - latest_gps.timestamp).seconds
+    else:
+        gps_age_seconds = 999999
+    
+    # Decision tree:
+    
+    # 1. If GPS is recent (< 5 minutes), use GPS
+    if gps_age_seconds < 300:
+        return 'gps'
+    
+    # 2. If GPS is stale AND flight number exists, check flight status
+    if trip.flight_number and gps_age_seconds >= 300:
+        flight_info = fetch_flight_status(trip.flight_number)
+        
+        if flight_info:
+            # Check if flight is currently active
+            if flight_info['status'] in ['active', 'en-route']:
+                return 'flight'
+            
+            # If flight landed recently, wait for GPS to resume
+            if flight_info['status'] == 'landed':
+                landing_time = parse(flight_info['arrival_time'])
+                minutes_since_landing = (datetime.now() - landing_time).seconds / 60
+                
+                # Give agent 30 minutes to get off plane and resume GPS
+                if minutes_since_landing < 30:
+                    return 'flight'  # Still show flight tracking
+                else:
+                    return 'unknown'  # GPS should have resumed by now
+    
+    # 3. GPS is stale but no flight info
+    return 'unknown'
+
+
+# Backend function called every 2 minutes
+async def update_trip_tracking_mode(trip_id):
+    """
+    Update the active tracking mode for a trip
+    Broadcast changes to connected clients
+    """
+    mode = determine_tracking_mode(trip_id)
+    
+    # Store current mode in database (for frontend)
+    db.trips.update(trip_id, {'tracking_mode': mode})
+    
+    # Broadcast mode change
+    await sio.emit('tracking_mode_changed', {
+        'mode': mode,
+        'timestamp': datetime.now().isoformat()
+    }, room=f'trip_{trip_id}')
+    
+    # If in flight mode, update flight position
+    if mode == 'flight':
+        await update_flight_tracking(trip_id)
+Frontend - Handle Mode Changes:
+jsx
+// Listen for tracking mode changes
+socket.on('tracking_mode_changed', (data) => {
+  console.log('Tracking mode changed to:', data.mode);
+  setTrackingMode(data.mode);
+  
+  // Update UI accordingly
+  if (data.mode === 'flight') {
+    setMarkerIcon('airplane');
+    fetchFlightInfo();
+  } else if (data.mode === 'gps') {
+    setMarkerIcon('car');
+  } else {
+    setMarkerIcon('question');
+  }
+});
+
+
+// Visual indicators for each mode
+const getTrackingModeDisplay = (mode) => {
+  switch(mode) {
+    case 'gps':
+      return {
+        icon: '📍',
+        text: 'GPS Tracking',
+        color: 'green',
+        description: 'Real-time location from transport agent'
+      };
+    case 'flight':
+      return {
+        icon: '✈️',
+        text: 'Flight Tracking',
+        color: 'blue',
+        description: 'Tracking via flight number'
+      };
+    case 'unknown':
+      return {
+        icon: '⚠️',
+        text: 'Location Unavailable',
+        color: 'orange',
+        description: 'Waiting for location update...'
+      };
+  }
+};
+
+
+// In UI:
+<div className={`tracking-mode mode-${trackingMode}`}>
+  <span className="mode-icon">{display.icon}</span>
+  <div>
+    <strong>{display.text}</strong>
+    <p>{display.description}</p>
+  </div>
+</div>
+Transition Animation:
+When switching modes, show a smooth transition:
+jsx
+const [isTransitioning, setIsTransitioning] = useState(false);
+
+
+useEffect(() => {
+  if (previousMode && previousMode !== trackingMode) {
+    setIsTransitioning(true);
+    setTimeout(() => setIsTransitioning(false), 2000);
+  }
+}, [trackingMode]);
+
+
+// Show transition message
+{isTransitioning && (
+  <div className="transition-message">
+    Switching from {previousMode} to {trackingMode} tracking...
+  </div>
+)}
+```
+
+
+**Acceptance Criteria:**
+- [ ] Automatically switches to flight tracking when GPS stops (>5 min)
+- [ ] Shows airplane icon on map during flight mode
+- [ ] Displays flight information when in flight mode
+- [ ] Automatically switches back to GPS when agent resumes sending location
+- [ ] Shows car icon when back in GPS mode
+- [ ] Handles case where flight lands but GPS doesn't resume (shows warning)
+- [ ] Mode indicator always shows current tracking method
+- [ ] Transition between modes is smooth (no jarring UI changes)
+- [ ] Works correctly for trips without flight numbers (stays in GPS mode)
+- [ ] Mode changes broadcast to all connected viewers in real-time
+
+
+**Edge Case Handling:**
+
+
+1. **GPS intermittent (signal loss in tunnel):**
+   - Don't switch to flight mode unless GPS stale for 5+ minutes
+   - Show "Last location X minutes ago" warning
+
+
+2. **Flight delayed/canceled:**
+   - Show flight status prominently
+   - Explain why still showing departure airport
+
+
+3. **Agent forgot to turn on location after landing:**
+   - After 30 min post-landing, show alert: "Waiting for GPS signal..."
+   - Send notification to agent to enable location
+
+
+4. **Multiple flights in one trip:**
+   - Track flight segments separately
+   - Switch modes for each leg
+
+
+**Testing Scenarios:**
+```
+Test 1: Normal GPS tracking
+- Start trip, send GPS every 30s
+- Expected: GPS mode active, car icon
+
+
+Test 2: Board flight
+- Stop sending GPS
+- Wait 5 minutes
+- Expected: Auto-switch to flight mode, airplane icon
+
+
+Test 3: Land from flight
+- Flight status changes to 'landed'
+- Resume sending GPS
+- Expected: Auto-switch back to GPS mode, car icon
+
+
+Test 4: No flight number
+- Stop sending GPS
+- Wait 10 minutes
+- Expected: Stay in GPS mode, show "Location unavailable"
+________________
+
+
+TASK 14: Basic Chat API
+TASK 14: Basic Chat API
+Context: Build the messaging system backend that allows parents, clinicians, and agents to communicate about a specific trip. All messages are trip-specific.
+Requirements:
+* Send messages to a trip
+* Retrieve messages for a trip
+* Messages linked to user and trip
+* Timestamp for each message
+* Basic read/unread status
+Database Schema (Already from Task 2):
+sql
+CREATE TABLE messages (
+    id SERIAL PRIMARY KEY,
+    trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
+    sender_id INTEGER REFERENCES users(id),
+    message_text TEXT NOT NULL,
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    read_by_recipient BOOLEAN DEFAULT FALSE
+);
+
+
+CREATE INDEX idx_messages_trip ON messages(trip_id, sent_at);
+API Endpoints:
+1. POST /api/trips/:id/messages
+Send a new message to a trip
+Request:
+json
+{
+  "message": "We're running 10 minutes late due to traffic."
+}
+Auth: Must be assigned to trip (agent, parent, clinician, or admin)
+Process:
+python
+def post_message(trip_id, request):
+    # 1. Verify user is authenticated
+    user = get_current_user(request)
+    
+    # 2. Verify user has access to this trip
+    trip = db.trips.get(trip_id)
+    if not has_trip_access(user, trip):
+        return 403
+    
+    # 3. Validate message
+    message_text = request.message.strip()
+    if not message_text:
+        return 400, "Message cannot be empty"
+    if len(message_text) > 5000:
+        return 400, "Message too long (max 5000 characters)"
+    
+    # 4. Insert message
+    message = db.messages.create({
+        'trip_id': trip_id,
+        'sender_id': user.id,
+        'message_text': message_text,
+        'sent_at': datetime.now(),
+        'read_by_recipient': False
+    })
+    
+    # 5. Return created message with sender info
+    return 201, {
+        'id': message.id,
+        'trip_id': trip_id,
+        'sender': {
+            'id': user.id,
+            'name': f'{user.first_name} {user.last_name}',
+            'role': user.role
+        },
+        'message': message_text,
+        'sent_at': message.sent_at.isoformat(),
+        'read': False
+    }
+Response:
+json
+{
+  "id": 123,
+  "trip_id": 1,
+  "sender": {
+    "id": 2,
+    "name": "Transport Agent",
+    "role": "agent"
+  },
+  "message": "We're running 10 minutes late due to traffic.",
+  "sent_at": "2025-11-04T16:45:00Z",
+  "read": false
+}
+2. GET /api/trips/:id/messages
+Retrieve all messages for a trip
+Auth: Must be assigned to trip
+Query params:
+* limit (optional): Max messages to return (default: 100)
+* since (optional): Only get messages after this timestamp
+Process:
+python
+def get_messages(trip_id, request):
+    # 1. Verify access
+    user = get_current_user(request)
+    trip = db.trips.get(trip_id)
+    if not has_trip_access(user, trip):
+        return 403
+    
+    # 2. Get query params
+    limit = request.query.get('limit', 100)
+    since = request.query.get('since')
+    
+    # 3. Fetch messages
+    query = db.messages.filter(trip_id=trip_id)
+    if since:
+        query = query.filter(sent_at__gt=since)
+    
+    messages = query.order_by('sent_at').limit(limit).all()
+    
+    # 4. Join with users table to get sender names
+    result = []
+    for msg in messages:
+        sender = db.users.get(msg.sender_id)
+        result.append({
+            'id': msg.id,
+            'sender': {
+                'id': sender.id,
+                'name': f'{sender.first_name} {sender.last_name}',
+                'role': sender.role
+            },
+            'message': msg.message_text,
+            'sent_at': msg.sent_at.isoformat(),
+            'read': msg.read_by_recipient,
+            'is_mine': msg.sender_id == user.id
+        })
+    
+    return 200, {
+        'messages': result,
+        'count': len(result)
+    }
+Response:
+json
+{
+  "messages": [
+    {
+      "id": 121,
+      "sender": {
+        "id": 3,
+        "name": "Parent User",
+        "role": "parent"
+      },
+      "message": "What time will you arrive?",
+      "sent_at": "2025-11-04T16:30:00Z",
+      "read": true,
+      "is_mine": false
+    },
+    {
+      "id": 122,
+      "sender": {
+        "id": 2,
+        "name": "Transport Agent",
+        "role": "agent"
+      },
+      "message": "We should arrive around 2:30 PM.",
+      "sent_at": "2025-11-04T16:35:00Z",
+      "read": false,
+      "is_mine": true
+    }
+  ],
+  "count": 2
+}
+3. PUT /api/messages/:id/read
+Mark a message as read
+Auth: Must be assigned to trip that owns this message
+Process:
+python
+def mark_message_read(message_id, request):
+    user = get_current_user(request)
+    
+    message = db.messages.get(message_id)
+    if not message:
+        return 404
+    
+    # Verify access to trip
+    trip = db.trips.get(message.trip_id)
+    if not has_trip_access(user, trip):
+        return 403
+    
+    # Update read status
+    db.messages.update(message_id, {'read_by_recipient': True})
+    
+    return 200, {'success': True}
+4. GET /api/trips/:id/messages/unread
+Get count of unread messages for a trip
+Auth: Must be assigned to trip
+Response:
+json
+{
+  "unread_count": 3
+}
+Acceptance Criteria:
+* Can POST message to trip
+* Message appears in GET /messages response
+* Messages ordered by timestamp (oldest first)
+* Sender name and role included in response
+* is_mine flag correctly identifies own messages
+* Only users assigned to trip can send/read messages
+* Empty messages rejected (400 error)
+* Messages over 5000 chars rejected
+* Can mark message as read
+* Can get unread message count
+* Query param since filters messages correctly
+* Messages from Trip A don't appear in Trip B
+Security:
+* Sanitize message text (prevent XSS)
+* Rate limit: Max 20 messages per minute per user
+* No HTML allowed in messages (plain text only for now)
+Testing:
+bash
+# Send message as agent
+curl -X POST http://localhost:8000/api/trips/1/messages \
+  -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Test message"}'
+
+
+# Get messages as parent
+curl http://localhost:8000/api/trips/1/messages \
+  -H "Authorization: Bearer $PARENT_TOKEN"
+
+
+# Try to access wrong trip (should fail)
+curl http://localhost:8000/api/trips/2/messages \
+  -H "Authorization: Bearer $PARENT_TOKEN"
+
+
+
+
+TASK 15: Chat UI
+TASK 15: Chat UI
+Context: Build the frontend chat interface where users can view message history and send new messages. This starts with polling (refresh to see new messages), then will upgrade to real-time in Task 16.
+Requirements:
+* Chat interface embedded in trip detail page
+* Display message history with timestamps
+* Send new messages
+* Auto-scroll to latest message
+* Show sender names and roles
+* Distinguish own messages from others (left vs right alignment)
+Frontend - Chat Component:
+jsx
+import React, { useState, useEffect, useRef } from 'react';
+
+
+const TripChat = ({ tripId, currentUserId }) => {
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+  const messagesEndRef = useRef(null);
+  
+  // Fetch messages on mount
+  useEffect(() => {
+    fetchMessages();
+  }, [tripId]);
+  
+  const fetchMessages = async () => {
+    try {
+      const response = await fetch(`/api/trips/${tripId}/messages`, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+        }
+      });
+      const data = await response.json();
+      setMessages(data.messages);
+      scrollToBottom();
+    } catch (error) {
+      console.error('Failed to fetch messages:', error);
+    }
+  };
+  
+  const sendMessage = async (e) => {
+    e.preventDefault();
+    
+    if (!newMessage.trim()) return;
+    
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/trips/${tripId}/messages`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ message: newMessage })
+      });
+      
+      const sentMessage = await response.json();
+      
+      // Add to messages list
+      setMessages(prev => [...prev, sentMessage]);
+      
+      // Clear input
+      setNewMessage('');
+      
+      // Scroll to bottom
+      scrollToBottom();
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      alert('Failed to send message');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+  
+  const formatTime = (timestamp) => {
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diff = now - date;
+    
+    // If today, show time only
+    if (diff < 86400000) {
+      return date.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit' 
+      });
+    }
+    // If within week, show day and time
+    else if (diff < 604800000) {
+      return date.toLocaleString('en-US', { 
+        weekday: 'short', 
+        hour: 'numeric', 
+        minute: '2-digit' 
+      });
+    }
+    // Otherwise show full date
+    else {
+      return date.toLocaleString('en-US', { 
+        month: 'short', 
+        day: 'numeric',
+        hour: 'numeric', 
+        minute: '2-digit' 
+      });
+    }
+  };
+  
+  return (
+    <div className="trip-chat">
+      <div className="chat-header">
+        <h3>💬 Trip Messages</h3>
+      </div>
+      
+      <div className="chat-messages">
+        {messages.length === 0 && (
+          <div className="no-messages">
+            No messages yet. Start a conversation!
+          </div>
+        )}
+        
+        {messages.map((msg) => (
+          <div 
+            key={msg.id} 
+            className={`message ${msg.is_mine ? 'message-mine' : 'message-other'}`}
+          >
+            <div className="message-header">
+              <span className="sender-name">
+                {msg.sender.name}
+              </span>
+              <span className="sender-role">
+                ({msg.sender.role})
+              </span>
+              <span className="message-time">
+                {formatTime(msg.sent_at)}
+              </span>
+            </div>
+            <div className="message-bubble">
+              {msg.message}
+            </div>
+          </div>
+        ))}
+        
+        <div ref={messagesEndRef} />
+      </div>
+      
+      <form className="chat-input" onSubmit={sendMessage}>
+        <textarea
+          value={newMessage}
+          onChange={(e) => setNewMessage(e.target.value)}
+          placeholder="Type a message..."
+          rows="2"
+          disabled={loading}
+          onKeyPress={(e) => {
+            // Send on Enter (without Shift)
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              sendMessage(e);
+            }
+          }}
+        />
+        <button type="submit" disabled={loading || !newMessage.trim()}>
+          {loading ? 'Sending...' : 'Send'}
+        </button>
+      </form>
+    </div>
+  );
+};
+
+
+export default TripChat;
+CSS Styling:
+css
+.trip-chat {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  height: 500px;
+}
+
+
+.chat-header {
+  padding: 15px;
+  border-bottom: 1px solid #eee;
+  background: #f8f9fa;
+}
+
+
+.chat-header h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+
+.no-messages {
+  text-align: center;
+  color: #999;
+  padding: 40px 20px;
+}
+
+
+.message {
+  display: flex;
+  flex-direction: column;
+  max-width: 70%;
+}
+
+
+.message-mine {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+
+.message-other {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+
+.message-header {
+  font-size: 12px;
+  color: #666;
+  margin-bottom: 4px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+
+.sender-name {
+  font-weight: 600;
+  color: #333;
+}
+
+
+.sender-role {
+  color: #999;
+  font-style: italic;
+}
+
+
+.message-time {
+  color: #999;
+}
+
+
+.message-bubble {
+  padding: 10px 14px;
+  border-radius: 12px;
+  word-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+
+.message-mine .message-bubble {
+  background: #007bff;
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+
+.message-other .message-bubble {
+  background: #e9ecef;
+  color: #333;
+  border-bottom-left-radius: 4px;
+}
+
+
+.chat-input {
+  display: flex;
+  gap: 10px;
+  padding: 15px;
+  border-top: 1px solid #eee;
+  background: #f8f9fa;
+}
+
+
+.chat-input textarea {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  resize: none;
+  font-family: inherit;
+  font-size: 14px;
+}
+
+
+.chat-input textarea:focus {
+  outline: none;
+  border-color: #007bff;
+}
+
+
+.chat-input button {
+  padding: 10px 20px;
+  background: #007bff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+
+.chat-input button:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+}
+
+
+.chat-input button:hover:not(:disabled) {
+  background: #0056b3;
+}
+Add to Trip Detail Page:
+jsx
+// In TripDetailPage.jsx
+<div className="trip-detail">
+  {/* Map section */}
+  <LiveTripMap ... />
+  
+  {/* Documents section */}
+  <DocumentsList ... />
+  
+  {/* Chat section */}
+  <TripChat 
+    tripId={trip.id} 
+    currentUserId={currentUser.id}
+  />
+</div>
+Acceptance Criteria:
+* Chat component displays all messages for trip
+* Messages ordered chronologically (oldest to newest)
+* Own messages appear on right (blue), others on left (gray)
+* Sender name and role displayed above each message
+* Timestamps formatted relative to now (e.g., "2:30 PM", "Yesterday 3:00 PM")
+* Can type and send message
+* Message appears in chat immediately after sending
+* Chat auto-scrolls to bottom when new message arrives
+* Enter key sends message (Shift+Enter adds newline)
+* Send button disabled when input empty or loading
+* Long messages wrap properly
+* Chat scrollable when messages exceed height
+* Mobile responsive (full width on small screens)
+Known Limitations (will fix in Task 16):
+* Need to manually refresh to see new messages from others
+* No "user is typing" indicator
+* No unread message badges
+________________
+
+
+
+
+TASK 16: Real-Time Chat (WebSocket)
+TASK 16: Real-Time Chat (WebSocket)
+Context: Upgrade the chat from manual refresh to real-time using WebSockets. Messages appear instantly for all users watching the trip.
+Requirements:
+* WebSocket integration for chat messages
+* Instant message delivery to all connected users
+* "User is typing" indicator
+* Message read receipts
+* Online/offline status
+Backend - WebSocket Chat Events:
+Add to WebSocket server from Task 11:
+python
+from socketio import AsyncServer
+
+
+# Store typing states
+typing_users = {}  # { trip_id: { user_id: timestamp } }
+
+
+@sio.event
+async def send_message(sid, data):
+    """
+    Receive new message via WebSocket and broadcast to all subscribers
+    """
+    trip_id = data['trip_id']
+    message_text = data['message']
+    token = data['token']
+    
+    # Verify authentication and access
+    user = verify_jwt(token)
+    trip = db.trips.get(trip_id)
+    
+    if not has_trip_access(user, trip):
+        await sio.emit('error', {'message': 'Access denied'}, to=sid)
+        return
+    
+    # Save message to database
+    message = db.messages.create({
+        'trip_id': trip_id,
+        'sender_id': user.id,
+        'message_text': message_text,
+        'sent_at': datetime.now(),
+        'read_by_recipient': False
+    })
+    
+    # Broadcast to all users subscribed to this trip
+    await sio.emit('new_message', {
+        'id': message.id,
+        'trip_id': trip_id,
+        'sender': {
+            'id': user.id,
+            'name': f'{user.first_name} {user.last_name}',
+            'role': user.role
+        },
+        'message': message_text,
+        'sent_at': message.sent_at.isoformat(),
+        'read': False
+    }, room=f'trip_{trip_id}')
+    
+    # Clear typing indicator for this user
+    if trip_id in typing_users and user.id in typing_users[trip_id]:
+        del typing_users[trip_id][user.id]
+        await broadcast_typing_status(trip_id)
+
+
+@sio.event
+async def user_typing(sid, data):
+    """
+    User started typing - broadcast to others
+    """
+    trip_id = data['trip_id']
+    token = data['token']
+    
+    user = verify_jwt(token)
+    
+    # Store typing state
+    if trip_id not in typing_users:
+        typing_users[trip_id] = {}
+    
+    typing_users[trip_id][user.id] = {
+        'name': f'{user.first_name} {user.last_name}',
+        'timestamp': datetime.now()
+    }
+    
+    # Broadcast typing status to room (excluding sender)
+    await broadcast_typing_status(trip_id, exclude_sid=sid)
+
+
+@sio.event
+async def user_stopped_typing(sid, data):
+    """
+    User stopped typing
+    """
+    trip_id = data['trip_id']
+    token = data['token']
+    
+    user = verify_jwt(token)
+    
+    # Remove typing state
+    if trip_id in typing_users and user.id in typing_users[trip_id]:
+        del typing_users[trip_id][user.id]
+        await broadcast_typing_status(trip_id)
+
+
+async def broadcast_typing_status(trip_id, exclude_sid=None):
+    """
+    Broadcast who is currently typing
+    """
+    if trip_id not in typing_users or not typing_users[trip_id]:
+        typing_list = []
+    else:
+        typing_list = [
+            user_data['name'] 
+            for user_data in typing_users[trip_id].values()
+        ]
+    
+    await sio.emit('typing_status', {
+        'trip_id': trip_id,
+        'typing_users': typing_list
+    }, room=f'trip_{trip_id}', skip_sid=exclude_sid)
+
+
+@sio.event
+async def mark_messages_read(sid, data):
+    """
+    Mark all messages in trip as read by this user
+    """
+    trip_id = data['trip_id']
+    token = data['token']
+    
+    user = verify_jwt(token)
+    
+    # Update all unread messages
+    db.messages.update_many(
+        {'trip_id': trip_id, 'read_by_recipient': False},
+        {'read_by_recipient': True}
+    )
+    
+    # Broadcast read status
+    await sio.emit('messages_read', {
+        'trip_id': trip_id,
+        'reader_id': user.id
+    }, room=f'trip_{trip_id}')
+
+
+# Background task to clean up stale typing indicators
+async def cleanup_stale_typing():
+    """
+    Remove typing indicators older than 10 seconds
+    """
+    while True:
+        await asyncio.sleep(5)
+        
+        now = datetime.now()
+        for trip_id in list(typing_users.keys()):
+            for user_id in list(typing_users[trip_id].keys()):
+                user_data = typing_users[trip_id][user_id]
+                age = (now - user_data['timestamp']).seconds
+                
+                if age > 10:
+                    del typing_users[trip_id][user_id]
+                    await broadcast_typing_status(trip_id)
+
+
+# Start cleanup task
+asyncio.create_task(cleanup_stale_typing())
+Frontend - Real-Time Chat:
+Update TripChat component:
+jsx
+import { useEffect, useRef, useState } from 'react';
+import { io } from 'socket.io-client';
+
+
+const TripChat = ({ tripId, currentUserId }) => {
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [typingUsers, setTypingUsers] = useState([]);
+  const socketRef = useRef(null);
+  const typingTimeoutRef = useRef(null);
+  
+  useEffect(() => {
+    // Connect to WebSocket
+    const socket = io('http://localhost:8000');
+    socketRef.current = socket;
+    
+    // Subscribe to trip
+    socket.emit('subscribe_trip', {
+      trip_id: tripId,
+      token: localStorage.getItem('auth_token')
+    });
+    
+    // Listen for new messages
+    socket.on('new_message', (message) => {
+      setMessages(prev => [...prev, message]);
+      scrollToBottom();
+    });
+    
+    // Listen for typing status
+    socket.on('typing_status', (data) => {
+      setTypingUsers(data.typing_users);
+    });
+    
+    // Listen for read receipts
+    socket.on('messages_read', (data) => {
+      // Update UI to show messages as read
+      setMessages(prev => prev.map(msg => ({
+        ...msg,
+        read: true
+      })));
+    });
+    
+    // Load initial messages via REST API
+    fetchInitialMessages();
+    
+    // Cleanup
+    return () => {
+      socket.emit('unsubscribe_trip', { trip_id: tripId });
+      socket.disconnect();
+    };
+  }, [tripId]);
+  
+  const fetchInitialMessages = async () => {
+    const response = await fetch(`/api/trips/${tripId}/messages`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('auth_token')}`
+      }
+    });
+    const data = await response.json();
+    setMessages(data.messages);
+    scrollToBottom();
+  };
+  
+  const sendMessage = (e) => {
+    e.preventDefault();
+    
+    if (!newMessage.trim()) return;
+    
+    // Send via WebSocket instead of REST API
+    socketRef.current.emit('send_message', {
+      trip_id: tripId,
+      message: newMessage,
+      token: localStorage.getItem('auth_token')
+    });
+    
+    // Clear input
+    setNewMessage('');
+    
+    // Stop typing indicator
+    socketRef.current.emit('user_stopped_typing', {
+      trip_id: tripId,
+      token: localStorage.getItem('auth_token')
+    });
+  };
+  
+  const handleTyping = (e) => {
+    setNewMessage(e.target.value);
+    
+    // Send typing indicator
+    socketRef.current.emit('user_typing', {
+      trip_id: tripId,
+      token: localStorage.getItem('auth_token')
+    });
+    
+    // Clear previous timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    
+    // Stop typing after 3 seconds of inactivity
+    typingTimeoutRef.current = setTimeout(() => {
+      socketRef.current.emit('user_stopped_typing', {
+        trip_id: tripId,
+        token: localStorage.getItem('auth_token')
+      });
+    }, 3000);
+  };
+  
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+  
+  return (
+    <div className="trip-chat">
+      <div className="chat-header">
+        <h3>💬 Trip Messages</h3>
+        <span className="chat-status">🟢 Connected</span>
+      </div>
+      
+      <div className="chat-messages">
+        {messages.map((msg) => (
+          <div 
+            key={msg.id} 
+            className={`message ${msg.is_mine ? 'message-mine' : 'message-other'}`}
+          >
+            {/* Same message rendering as Task 15 */}
+            <div className="message-header">
+              <span className="sender-name">{msg.sender.name}</span>
+              <span className="sender-role">({msg.sender.role})</span>
+              <span className="message-time">{formatTime(msg.sent_at)}</span>
+            </div>
+            <div className="message-bubble">
+              {msg.message}
+              {msg.read && msg.is_mine && (
+                <span className="read-indicator">✓✓</span>
+              )}
+            </div>
+          </div>
+        ))}
+        
+        {/* Typing indicator */}
+        {typingUsers.length > 0 && (
+          <div className="typing-indicator">
+            {typingUsers.join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing
+            <span className="typing-dots">
+              <span>.</span><span>.</span><span>.</span>
+            </span>
+          </div>
+        )}
+        
+        <div ref={messagesEndRef} />
+      </div>
+      
+      <form className="chat-input" onSubmit={sendMessage}>
+        <textarea
+          value={newMessage}
+          onChange={handleTyping}
+          placeholder="Type a message..."
+          rows="2"
+        />
+        <button type="submit" disabled={!newMessage.trim()}>
+          Send
+        </button>
+      </form>
+    </div>
+  );
+};
+Typing Indicator CSS:
+css
+.typing-indicator {
+  color: #666;
+  font-size: 13px;
+  font-style: italic;
+  padding: 8px 12px;
+  background: #f5f5f5;
+  border-radius: 8px;
+  display: inline-block;
+}
+
+
+.typing-dots {
+  margin-left: 3px;
+}
+
+
+.typing-dots span {
+  animation: blink 1.4s infinite;
+  animation-fill-mode: both;
+}
+
+
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+
+@keyframes blink {
+  0%, 80%, 100% {
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+
+.read-indicator {
+  color: #4CAF50;
+  font-size: 11px;
+  margin-left: 5px;
+}
+
+
+.chat-status {
+  color: #4CAF50;
+  font-size: 12px;
+  font-weight: normal;
+}
+Acceptance Criteria:
+* Messages appear instantly for all users (no refresh needed)
+* "User is typing..." indicator shows when someone types
+* Typing indicator disappears after 3 seconds of inactivity
+* Multiple typing users shown (e.g., "John and Mary are typing...")
+* Read receipts (✓✓) appear when message is read
+* Connection status indicator shows "Connected" or "Disconnected"
+* Falls back to REST API if WebSocket fails
+* No duplicate messages appear
+* Chat works with multiple users simultaneously
+* Typing indicator only shows for other users (not self)
+Testing:
+1. Open trip in two browser windows (different users)
+2. Type in Window 1 → verify typing indicator appears in Window 2
+3. Send message in Window 1 → verify appears instantly in Window 2
+4. Stop typing → verify indicator disappears after 3 seconds
+5. Disconnect internet → verify status changes to "Disconnected"
+________________
+
+
+
+
+TASK 17: Admin Chat Takeover
+TASK 17: Admin Chat Takeover
+Context: Allow admins to monitor all chat conversations and optionally "take over" a conversation by blocking parent/clinician messages temporarily.
+Requirements:
+* Admin can see all active chats across all trips
+* Admin can "take over" any chat
+* When taken over, parent/clinician cannot send messages (agent can still respond)
+* Admin can release control back to normal mode
+* Visual indicator when admin has taken over
+Database Addition:
+sql
+ALTER TABLE trips ADD COLUMN chat_admin_takeover BOOLEAN DEFAULT FALSE;
+ALTER TABLE trips ADD COLUMN chat_taken_over_by INTEGER REFERENCES users(id);
+ALTER TABLE trips ADD COLUMN chat_takeover_at TIMESTAMP;
+API Endpoints:
+1. POST /api/trips/:id/chat/takeover
+Admin takes over chat
+Auth: Admin only
+Process:
+python
+def takeover_chat(trip_id, request):
+    user = get_current_user(request)
+    
+    if user.role != 'admin':
+        return 403
+    
+    # Set takeover flag
+    db.trips.update(trip_id, {
+        'chat_admin_takeover': True,
+        'chat_taken_over_by': user.id,
+        'chat_takeover_at': datetime.now()
+    })
+    
+    # Broadcast to WebSocket clients
+    await sio.emit('chat_takeover', {
+        'trip_id': trip_id,
+        'admin_name': f'{user.first_name} {user.last_name}',
+        'taken_over': True
+    }, room=f'trip_{trip_id}')
+    
+    return 200, {'success': True}
+2. POST /api/trips/:id/chat/release
+Admin releases chat control
+Auth: Admin only
+Process:
+python
+def release_chat(trip_id, request):
+    user = get_current_user(request)
+    
+    if user.role != 'admin':
+        return 403
+    
+    # Release takeover
+    db.trips.update(trip_id, {
+        'chat_admin_takeover': False,
+        'chat_taken_over_by': None,
+        'chat_takeover_at': None
+    })
+    
+    # Broadcast to WebSocket clients
+    await sio.emit('chat_takeover', {
+        'trip_id': trip_id,
+        'taken_over': False
+    }, room=f'trip_{trip_id}')
+    
+    return 200, {'success': True}
+3. GET /api/admin/active-chats
+List all active trips with recent messages (admin dashboard)
+Auth: Admin only
+Response:
+json
+{
+  "trips": [
+    {
+      "id": 1,
+      "client_name": "John Doe",
+      "status": "in_progress",
+      "unread_count": 3,
+      "last_message": {
+        "sender": "Parent User",
+        "message": "How much longer?",
+        "sent_at": "2025-11-04T16:45:00Z"
+      },
+      "admin_takeover": false
+    },
+    // ... more trips
+  ]
+}
+Backend - Message Blocking Logic:
+Update send_message WebSocket handler:
+python
+@sio.event
+async def send_message(sid, data):
+    trip_id = data['trip_id']
+    message_text = data['message']
+    token = data['token']
+    
+    user = verify_jwt(token)
+    trip = db.trips.get(trip_id)
+    
+    # Check if chat is under admin takeover
+    if trip.chat_admin_takeover:
+        # Only admin and agent can send messages during takeover
+        if user.role not in ['admin', 'agent']:
+            await sio.emit('error', {
+                'message': 'Chat is currently being managed by an administrator'
+            }, to=sid)
+            return
+    
+    # ... rest of send_message logic ...
+Frontend - Admin Chat Dashboard:
+New page: /admin/chats
+jsx
+const AdminChatDashboard = () => {
+  const [activeChats, setActiveChats] = useState([]);
+  
+  useEffect(() => {
+    fetchActiveChats();
+    
+    // Refresh every 10 seconds
+    const interval = setInterval(fetchActiveChats, 10000);
+    return () => clearInterval(interval);
+  }, []);
+  
+  const fetchActiveChats = async () => {
+    const response = await fetch('/api/admin/active-chats', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const data = await response.json();
+    setActiveChats(data.trips);
+  };
+  
+  const takeoverChat = async (tripId) => {
+    await fetch(`/api/trips/${tripId}/chat/takeover`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    fetchActiveChats();
+  };
+  
+  const releaseChat = async (tripId) => {
+    await fetch(`/api/trips/${tripId}/chat/release`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    fetchActiveChats();
+  };
+  
+  return (
+    <div className="admin-chat-dashboard">
+      <h1>Active Trip Chats</h1>
+      
+      <div className="chat-list">
+        {activeChats.map(trip => (
+          <div key={trip.id} className="chat-card">
+            <div className="chat-header">
+              <h3>{trip.client_name}</h3>
+              {trip.admin_takeover && (
+                <span className="takeover-badge">🔒 Admin Control</span>
+              )}
+              {trip.unread_count > 0 && (
+                <span className="unread-badge">{trip.unread_count}</span>
+              )}
+            </div>
+            
+            {trip.last_message && (
+              <div className="last-message">
+                <strong>{trip.last_message.sender}:</strong>
+                {trip.last_message.message}
+                <span className="message-time">
+                  {formatTime(trip.last_message.sent_at)}
+                </span>
+              </div>
+            )}
+            
+            <div className="chat-actions">
+              <button onClick={() => window.location.href = `/trips/${trip.id}`}>
+                View Trip
+              </button>
+              
+              {!trip.admin_takeover ? (
+                <button 
+                  className="takeover-btn"
+                  onClick={() => takeoverChat(trip.id)}
+                >
+                  Take Over Chat
+                </button>
+              ) : (
+                <button 
+                  className="release-btn"
+                  onClick={() => releaseChat(trip.id)}
+                >
+                  Release Control
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+Frontend - Takeover Indicator in Chat:
+Update TripChat component:
+jsx
+const [chatTakenOver, setChatTakenOver] = useState(false);
+const [adminName, setAdminName] = useState('');
+
+
+// Listen for takeover events
+socket.on('chat_takeover', (data) => {
+  setChatTakenOver(data.taken_over);
+  setAdminName(data.admin_name || '');
+});
+
+
+// Check takeover status on load
+useEffect(() => {
+  fetchTripDetails();
+}, []);
+
+
+const fetchTripDetails = async () => {
+  const response = await fetch(`/api/trips/${tripId}`);
+  const trip = await response.json();
+  setChatTakenOver(trip.chat_admin_takeover);
+};
+
+
+// In render:
+{chatTakenOver && currentUser.role !== 'admin' && currentUser.role !== 'agent' && (
+  <div className="chat-takeover-notice">
+    ⚠️ An administrator is currently managing this conversation.
+    Your messages are temporarily disabled.
+  </div>
+)}
+
+
+// Disable input for parent/clinician during takeover
+<textarea
+  value={newMessage}
+  onChange={handleTyping}
+  disabled={chatTakenOver && !['admin', 'agent'].includes(currentUser.role)}
+  placeholder={
+    chatTakenOver && !['admin', 'agent'].includes(currentUser.role)
+      ? "Chat is under admin control..."
+      : "Type a message..."
+  }
+/>
+Acceptance Criteria:
+* Admin can see dashboard of all active chats
+* Dashboard shows unread message counts
+* Admin can click "Take Over Chat"
+* When taken over, parent/clinician see warning message
+* Parent/clinician cannot send messages during takeover
+* Agent can still send messages during takeover
+* Admin can send messages freely
+* Takeover indicator appears for all users in real-time
+* Admin can release control
+* After release, parent/clinician can send messages again
+* Multiple admins can see takeover status
+* Takeover persists across page refreshes
+Use Cases:
+1. Parent is spamming agent with messages → Admin takes over
+2. Urgent situation requires admin intervention → Admin takes over
+3. Agent needs help answering question → Admin takes over temporarily
+________________
+
+
+
+
+
+
+TASK 18: Trip Status Updates
+TASK 18: Trip Status Updates
+Context: Allow transport agents to update trip status (In Progress, Completed) from the mobile app. Status changes sync to all viewers in real-time.
+Requirements:
+* Agent can change trip status from mobile app
+* Status options: Scheduled, In Progress, Completed, Cancelled
+* Status changes broadcast to all viewers
+* Timestamps recorded for each status change
+* Admin can change status from web dashboard
+Database Addition:
+sql
+CREATE TABLE trip_status_history (
+    id SERIAL PRIMARY KEY,
+    trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
+    changed_by_id INTEGER REFERENCES users(id),
+    old_status VARCHAR(50),
+    new_status VARCHAR(50),
+    changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    notes TEXT
+);
+
+
+CREATE INDEX idx_status_history_trip ON trip_status_history(trip_id, changed_at DESC);
+API Endpoints:
+PUT /api/trips/:id/status
+Update trip status
+Auth: Agent assigned to trip or Admin
+Request:
+json
+{
+  "status": "completed",
+  "notes": "Trip completed successfully. Client delivered safely."
+}
+Valid status values: scheduled, in_progress, completed, cancelled
+Process:
+python
+def update_trip_status(trip_id, request):
+    user = get_current_user(request)
+    trip = db.trips.get(trip_id)
+    
+    # Verify permission (must be assigned agent or admin)
+    if user.role != 'admin' and trip.assigned_agent_id != user.id:
+        return 403, "Only assigned agent or admin can update status"
+    
+    # Validate status
+    valid_statuses = ['scheduled', 'in_progress', 'completed', 'cancelled']
+    new_status = request.status
+    if new_status not in valid_statuses:
+        return 400, f"Invalid status. Must be one of: {valid_statuses}"
+    
+    # Get current status
+    old_status = trip.status
+    
+    # Record status change in history
+    db.trip_status_history.create({
+        'trip_id': trip_id,
+        'changed_by_id': user.id,
+        'old_status': old_status,
+        'new_status': new_status,
+        'changed_at': datetime.now(),
+        'notes': request.get('notes', '')
+    })
+    
+    # Update trip status
+    update_data = {'status': new_status}
+    
+    # Set timestamps based on status
+    if new_status == 'in_progress' and not trip.actual_start:
+        update_data['actual_start'] = datetime.now()
+    elif new_status == 'completed' and not trip.actual_end:
+        update_data['actual_end'] = datetime.now()
+    
+    db.trips.update(trip_id, update_data)
+    
+    # Broadcast to WebSocket clients
+    await sio.emit('status_changed', {
+        'trip_id': trip_id,
+        'old_status': old_status,
+        'new_status': new_status,
+        'changed_by': f'{user.first_name} {user.last_name}',
+        'timestamp': datetime.now().isoformat()
+    }, room=f'trip_{trip_id}')
+    
+    return 200, {
+        'success': True,
+        'trip_id': trip_id,
+        'status': new_status
+    }
+GET /api/trips/:id/status-history
+Get status change history for a trip
+Auth: Must be assigned to trip
+Response:
+json
+{
+  "history": [
+    {
+      "old_status": "scheduled",
+      "new_status": "in_progress",
+      "changed_by": "Transport Agent",
+      "changed_at": "2025-11-10T09:05:00Z",
+      "notes": "Started trip"
+    },
+    {
+      "old_status": "in_progress",
+      "new_status": "completed",
+      "changed_by": "Transport Agent",
+      "changed_at": "2025-11-10T14:20:00Z",
+      "notes": "Trip completed successfully"
+    }
+  ]
+}
+Mobile App - Status Update UI:
+Add to Active Trip screen (Task 8):
+jsx
+const ActiveTripScreen = ({ tripId, navigation }) => {
+  const [trip, setTrip] = useState(null);
+  const [updating, setUpdating] = useState(false);
+  
+  const updateStatus = async (newStatus, notes = '') => {
+    setUpdating(true);
+    try {
+      await fetch(`${API_URL}/api/trips/${tripId}/status`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ status: newStatus, notes })
+      });
+      
+      // Stop location tracking if completed
+      if (newStatus === 'completed') {
+        stopLocationTracking();
+        navigation.navigate('TripList');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to update status');
+    } finally {
+      setUpdating(false);
+    }
+  };
+  
+  const confirmComplete = () => {
+    Alert.alert(
+      'Complete Trip',
+      'Mark this trip as completed?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Complete',
+          onPress: () => updateStatus('completed', 'Trip completed successfully')
+        }
+      ]
+    );
+  };
+  
+  return (
+    <View style={styles.container}>
+      <Text style={styles.title}>Trip Active</Text>
+      <Text style={styles.client}>{trip?.client_name}</Text>
+      
+      <View style={styles.statusCard}>
+        <Text style={styles.statusLabel}>Status</Text>
+        <Text style={[styles.status, styles[`status_${trip?.status}`]]}>
+          {trip?.status}
+        </Text>
+      </View>
+      
+      <View style={styles.locationInfo}>
+        <Text>📍 Location Sharing Active</Text>
+        <Text style={styles.lastUpdate}>
+          Last update: {getTimeAgo(lastLocationTime)}
+        </Text>
+      </View>
+      
+      <View style={styles.actions}>
+        {trip?.status === 'in_progress' && (
+          <TouchableOpacity
+            style={styles.completeButton}
+            onPress={confirmComplete}
+            disabled={updating}
+          >
+            <Text style={styles.buttonText}>
+              {updating ? 'Updating...' : 'Complete Trip'}
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+};
+Web UI - Status Display:
+Update trip detail page:
+jsx
+const TripDetail = ({ tripId }) => {
+  const [trip, setTrip] = useState(null);
+  const [statusHistory, setStatusHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  
+  // Listen for status changes via WebSocket
+  useEffect(() => {
+    socket.on('status_changed', (data) => {
+      if (data.trip_id === tripId) {
+        setTrip(prev => ({ ...prev, status: data.new_status }));
+        
+        // Show toast notification
+        showToast(`Trip status changed to ${data.new_status} by ${data.changed_by}`);
+      }
+    });
+  }, []);
+  
+  const fetchStatusHistory = async () => {
+    const response = await fetch(`/api/trips/${tripId}/status-history`);
+    const data = await response.json();
+    setStatusHistory(data.history);
+    setShowHistory(true);
+  };
+  
+  const getStatusColor = (status) => {
+    const colors = {
+      'scheduled': '#2196F3',
+      'in_progress': '#4CAF50',
+      'completed': '#9E9E9E',
+      'cancelled': '#F44336'
+    };
+    return colors[status] || '#666';
+  };
+  
+  return (
+    <div className="trip-detail">
+      <div className="trip-header">
+        <h1>{trip.client_name}</h1>
+        <div 
+          className="status-badge"
+          style={{ backgroundColor: getStatusColor(trip.status) }}
+        >
+          {trip.status}
+        </div>
+        <button 
+          className="history-btn"
+          onClick={fetchStatusHistory}
+        >
+          View Status History
+        </button>
+      </div>
+      
+      {showHistory && (
+        <div className="status-history-modal">
+          <h3>Status History</h3>
+          <div className="timeline">
+            {statusHistory.map((item, index) => (
+              <div key={index} className="timeline-item">
+                <div className="timeline-dot" />
+                <div className="timeline-content">
+                  <div className="status-change">
+                    <span className="old-status">{item.old_status}</span>
+                    <span className="arrow">→</span>
+                    <span className="new-status">{item.new_status}</span>
+                  </div>
+                  <div className="change-meta">
+                    {item.changed_by} • {formatTime(item.changed_at)}
+                  </div>
+                  {item.notes && (
+                    <div className="change-notes">{item.notes}</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <button onClick={() => setShowHistory(false)}>Close</button>
+        </div>
+      )}
+      
+      {/* Rest of trip details... */}
+    </div>
+  );
+};
+Acceptance Criteria:
+* Agent can complete trip from mobile app
+* Trip status updates in database
+* Status change appears immediately for all viewers (WebSocket)
+* Timestamps recorded (actual_start, actual_end)
+* Status history saved with who changed it and when
+* Can view full status history timeline
+* Status badge color changes based on status
+* Confirmation dialog before completing trip
+* Admin can also update status from web dashboard
+* Location tracking stops when trip completed
+* Cannot change status back to earlier state (e.g., completed → in_progress) without admin permission
+Status Transition Rules:
+* scheduled → in_progress (when agent starts trip)
+* in_progress → completed (when agent ends trip)
+* Any status → cancelled (admin only)
+* completed/cancelled cannot be changed (final states)
+________________
+
+
+
+
+
+
+TASK 19: Notifications
+TASK 19: Notifications
+Context: Send email/SMS notifications to parents and clinicians when important trip events occur.
+Requirements:
+* Email notifications using SendGrid or AWS SES
+* SMS notifications using Twilio
+* Notify on: Trip started, Trip completed, New message, Status changes
+* User preferences for notification types
+* Batch notifications (don't spam)
+Setup Services:
+SendGrid (Email):
+1. Sign up at sendgrid.com
+2. Create API key
+3. Verify sender email
+4. Install: pip install sendgrid
+Twilio (SMS):
+1. Sign up at twilio.com
+2. Get Account SID and Auth Token
+3. Get phone number
+4. Install: pip install twilio
+Database - Notification Preferences:
+sql
+CREATE TABLE notification_preferences (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) UNIQUE,
+    email_trip_started BOOLEAN DEFAULT TRUE,
+    email_trip_completed BOOLEAN DEFAULT TRUE,
+    email_new_message BOOLEAN DEFAULT TRUE,
+    email_status_changed BOOLEAN DEFAULT TRUE,
+    sms_trip_started BOOLEAN DEFAULT FALSE,
+    sms_trip_completed BOOLEAN DEFAULT TRUE,
+    sms_new_message BOOLEAN DEFAULT FALSE,
+    sms_status_changed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+CREATE TABLE notification_log (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    trip_id INTEGER REFERENCES trips(id),
+    notification_type VARCHAR(50), -- 'email' or 'sms'
+    event_type VARCHAR(50), -- 'trip_started', 'trip_completed', etc.
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    success BOOLEAN,
+    error_message TEXT
+);
+Backend - Notification Service:
+python
+import os
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+from twilio.rest import Client
+
+
+# Configuration
+SENDGRID_API_KEY = os.getenv('SENDGRID_API_KEY')
+SENDGRID_FROM_EMAIL = os.getenv('SENDGRID_FROM_EMAIL')
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
+
+
+sg = SendGridAPIClient(SENDGRID_API_KEY)
+twilio = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+
+async def send_email_notification(to_email, subject, body):
+    """Send email via SendGrid"""
+    try:
+        message = Mail(
+            from_email=SENDGRID_FROM_EMAIL,
+            to_emails=to_email,
+            subject=subject,
+            html_content=body
+        )
+        response = sg.send(message)
+        return response.status_code == 202
+    except Exception as e:
+        print(f'Failed to send email: {e}')
+        return False
+
+
+async def send_sms_notification(to_phone, body):
+    """Send SMS via Twilio"""
+    try:
+        message = twilio.messages.create(
+            body=body,
+            from_=TWILIO_PHONE_NUMBER,
+            to=to_phone
+        )
+        return message.sid is not None
+    except Exception as e:
+        print(f'Failed to send SMS: {e}')
+        return False
+
+
+async def notify_trip_started(trip_id):
+    """Notify when trip starts"""
+    trip = db.trips.get(trip_id)
+    agent = db.users.get(trip.assigned_agent_id)
+    parent = db.users.get(trip.assigned_parent_id)
+    clinician = db.users.get(trip.assigned_clinician_id)
+    
+    # Get notification preferences
+    for user in [parent, clinician]:
+        if not user:
+            continue
+            
+        prefs = db.notification_preferences.get(user_id=user.id)
+        if not prefs:
+            prefs = db.notification_preferences.create(user_id=user.id)
+        
+        # Email notification
+        if prefs.email_trip_started:
+            subject = f"Transport Started - {trip.client_name}"
+            body = f"""
+            <h2>Transport Has Started</h2>
+            <p>The transport for {trip.client_name} has begun.</p>
+            <p><strong>Agent:</strong> {agent.first_name} {agent.last_name}</p>
+            <p><strong>Pickup:</strong> {trip.pickup_location}</p>
+            <p><strong>Dropoff:</strong> {trip.dropoff_location}</p>
+            <p><a href="https://yourapp.com/trips/{trip.id}">Track Live</a></p>
+            """
+            success = await send_email_notification(user.email, subject, body)
+            
+            # Log notification
+            db.notification_log.create({
+                'user_id': user.id,
+                'trip_id': trip.id,
+                'notification_type': 'email',
+                'event_type': 'trip_started',
+                'success': success
+            })
+        
+        # SMS notification
+        if prefs.sms_trip_started and user.phone:
+            body = f"Transport started for {trip.client_name}. Track at: https://yourapp.com/trips/{trip.id}"
+            success = await send_sms_notification(user.phone, body)
+            
+            db.notification_log.create({
+                'user_id': user.id,
+                'trip_id': trip.id,
+                'notification_type': 'sms',
+                'event_type': 'trip_started',
+                'success': success
+            })
+
+
+async def notify_trip_completed(trip_id):
+    """Notify when trip completes"""
+    trip = db.trips.get(trip_id)
+    parent = db.users.get(trip.assigned_parent_id)
+    clinician = db.users.get(trip.assigned_clinician_id)
+    
+    for user in [parent, clinician]:
+        if not user:
+            continue
+            
+        prefs = db.notification_preferences.get(user_id=user.id)
+        
+        if prefs.email_trip_completed:
+            subject = f"Transport Completed - {trip.client_name}"
+            body = f"""
+            <h2>Transport Completed</h2>
+            <p>The transport for {trip.client_name} has been completed successfully.</p>
+            <p><strong>Started:</strong> {trip.actual_start}</p>
+            <p><strong>Completed:</strong> {trip.actual_end}</p>
+            <p><a href="https://yourapp.com/trips/{trip.id}">View Details</a></p>
+            """
+            await send_email_notification(user.email, subject, body)
+        
+        if prefs.sms_trip_completed and user.phone:
+            body = f"Transport for {trip.client_name} completed successfully."
+            await send_sms_notification(user.phone, body)
+
+
+async def notify_new_message(trip_id, message_id):
+    """Notify when new message is sent"""
+    message = db.messages.get(message_id)
+    trip = db.trips.get(trip_id)
+    sender = db.users.get(message.sender_id)
+    
+    # Determine recipients (everyone except sender)
+    recipients = []
+    for user_id in [trip.assigned_parent_id, trip.assigned_clinician_id, trip.assigned_agent_id]:
+        if user_id and user_id != message.sender_id:
+            recipients.append(db.users.get(user_id))
+    
+    # Batch notifications (don't send for every message)
+    # Only send if it's been > 5 minutes since last notification
+    for user in recipients:
+        last_notification = db.notification_log.get_latest(
+            user_id=user.id,
+            trip_id=trip.id,
+            event_type='new_message'
+        )
+        
+        if last_notification:
+            minutes_ago = (datetime.now() - last_notification.sent_at).seconds / 60
+            if minutes_ago < 5:
+                continue  # Skip, too soon
+        
+        prefs = db.notification_preferences.get(user_id=user.id)
+        
+        if prefs.email_new_message:
+            subject = f"New Message - {trip.client_name}"
+            body = f"""
+            <h2>New Message</h2>
+            <p><strong>From:</strong> {sender.first_name} {sender.last_name} ({sender.role})</p>
+            <p><strong>Message:</strong> {message.message_text[:200]}...</p>
+            <p><a href="https://yourapp.com/trips/{trip.id}">View Conversation</a></p>
+            """
+            await send_email_notification(user.email, subject, body)
+
+
+# Hook into existing functions
+# In update_trip_status (Task 18):
+if new_status == 'in_progress':
+    await notify_trip_started(trip_id)
+elif new_status == 'completed':
+    await notify_trip_completed(trip_id)
+
+
+# In send_message WebSocket handler (Task 16):
+await notify_new_message(trip_id, message.id)
+API Endpoints:
+GET /api/users/me/notification-preferences
+Get user's notification preferences
+Response:
+json
+{
+  "email_trip_started": true,
+  "email_trip_completed": true,
+  "email_new_message": true,
+  "email_status_changed": true,
+  "sms_trip_started": false,
+  "sms_trip_completed": true,
+  "sms_new_message": false,
+  "sms_status_changed": false
+}
+PUT /api/users/me/notification-preferences
+Update notification preferences
+Request:
+json
+{
+  "email_trip_started": false,
+  "sms_trip_completed": true
+}
+Frontend - Notification Settings:
+Add settings page:
+jsx
+const NotificationSettings = () => {
+  const [prefs, setPrefs] = useState(null);
+  const [saving, setSaving] = useState(false);
+  
+  useEffect(() => {
+    fetchPreferences();
+  }, []);
+  
+  const fetchPreferences = async () => {
+    const response = await fetch('/api/users/me/notification-preferences', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    const data = await response.json();
+    setPrefs(data);
+  };
+  
+  const updatePreference = async (key, value) => {
+    setPrefs(prev => ({ ...prev, [key]: value }));
+    
+    setSaving(true);
+    await fetch('/api/users/me/notification-preferences', {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ [key]: value })
+    });
+    setSaving(false);
+  };
+  
+  return (
+    <div className="notification-settings">
+      <h2>Notification Preferences</h2>
+      
+      <div className="settings-section">
+        <h3>Email Notifications</h3>
+        
+        <label>
+          <input
+            type="checkbox"
+            checked={prefs?.email_trip_started}
+            onChange={(e) => updatePreference('email_trip_started', e.target.checked)}
+          />
+          Trip Started
+        </label>
+        
+        <label>
+          <input
+            type="checkbox"
+            checked={prefs?.email_trip_completed}
+            onChange={(e) => updatePreference('email_trip_completed', e.target.checked)}
+          />
+          Trip Completed
+        </label>
+        
+        <label>
+          <input
+            type="checkbox"
+            checked={prefs?.email_new_message}
+            onChange={(e) => updatePreference('email_new_message', e.target.checked)}
+          />
+          New Messages
+        </label>
+      </div>
+      
+      <div className="settings-section">
+        <h3>SMS Notifications</h3>
+        
+        <label>
+          <input
+            type="checkbox"
+            checked={prefs?.sms_trip_completed}
+            onChange={(e) => updatePreference('sms_trip_completed', e.target.checked)}
+          />
+          Trip Completed
+        </label>
+        
+        <p className="note">
+          SMS notifications may incur charges from your carrier.
+        </p>
+      </div>
+      
+      {saving && <div className="saving-indicator">Saving...</div>}
+    </div>
+  );
+};
+Acceptance Criteria:
+* Email sent when trip starts
+* Email sent when trip completes
+* Email sent for new messages (max once per 5 minutes)
+* SMS sent when trip completes
+* User can customize notification preferences
+* Preferences save successfully
+* Notifications not sent to users who disabled them
+* Notification log records all sent notifications
+* Failed notifications logged with error
+* Emails have proper formatting and links
+* SMS messages are concise (< 160 chars)
+Cost Management:
+* Batch message notifications (max 1 per 5 min)
+* Only send SMS for important events (completed, not every message)
+* Use SendGrid free tier (100 emails/day)
+* Use Twilio trial credits for testing
+________________
+
+
+
+
+
+
+TASK 20: Security Hardening (FINAL)
+TASK 20: Security Hardening (FINAL)
+Context: Now that everything works, add production-level security. This is what we skipped in Task 1 to move faster.
+Requirements:
+* Password hashing (bcrypt)
+* Refresh tokens
+* Password reset flow
+* Rate limiting
+* CSRF protection
+* Input sanitization
+* Audit logging
+* HTTPS enforcement
+1. Password Hashing
+Replace plaintext passwords with bcrypt:
+python
+import bcrypt
+
+
+# When creating user
+def create_user(email, password, role):
+    # Hash password
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    
+    db.users.create({
+        'email': email,
+        'password': hashed.decode('utf-8'),  # Store as string
+        'role': role
+    })
+
+
+# When logging in
+def login(email, password):
+    user = db.users.get(email=email)
+    if not user:
+        return None
+    
+    # Verify password
+    if bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
+        # Generate tokens
+        return generate_tokens(user)
+    else:
+        return None
+
+
+# Migrate existing users (one-time script)
+def migrate_passwords():
+    users = db.users.all()
+    for user in users:
+        # Hash existing plaintext password
+        hashed = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt())
+        db.users.update(user.id, {'password': hashed.decode('utf-8')})
+2. Refresh Tokens
+Add refresh token system:
+sql
+CREATE TABLE refresh_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(500) UNIQUE NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    revoked BOOLEAN DEFAULT FALSE
+);
+
+
+CREATE INDEX idx_refresh_token ON refresh_tokens(token);
+python
+import secrets
+from datetime import datetime, timedelta
+
+
+def generate_tokens(user):
+    # Access token (short-lived: 1 hour)
+    access_token = jwt.encode({
+        'user_id': user.id,
+        'email': user.email,
+        'role': user.role,
+        'exp': datetime.utcnow() + timedelta(hours=1)
+    }, JWT_SECRET)
+    
+    # Refresh token (long-lived: 30 days)
+    refresh_token = secrets.token_urlsafe(64)
+    
+    db.refresh_tokens.create({
+        'user_id': user.id,
+        'token': refresh_token,
+        'expires_at': datetime.utcnow() + timedelta(days=30)
+    })
+    
+    return {
+        'access_token': access_token,
+        'refresh_token': refresh_token,
+        'expires_in': 3600  # 1 hour in seconds
+    }
+
+
+# New endpoint: POST /api/auth/refresh
+def refresh_access_token(refresh_token):
+    # Verify refresh token
+    token_record = db.refresh_tokens.get(token=refresh_token)
+    
+    if not token_record or token_record.revoked:
+        return 401, "Invalid refresh token"
+    
+    if token_record.expires_at < datetime.utcnow():
+        return 401, "Refresh token expired"
+    
+    # Generate new access token
+    user = db.users.get(token_record.user_id)
+    access_token = jwt.encode({
+        'user_id': user.id,
+        'email': user.email,
+        'role': user.role,
+        'exp': datetime.utcnow() + timedelta(hours=1)
+    }, JWT_SECRET)
+    
+    return 200, {
+        'access_token': access_token,
+        'expires_in': 3600
+    }
+
+
+# Logout: Revoke refresh token
+def logout(refresh_token):
+    db.refresh_tokens.update(
+        {'token': refresh_token},
+        {'revoked': True}
+    )
+3. Password Reset
+sql
+CREATE TABLE password_reset_tokens (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    token VARCHAR(500) UNIQUE NOT NULL,
+    expires_at TIMESTAMP NOT NULL,
+    used BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+python
+# POST /api/auth/forgot-password
+def request_password_reset(email):
+    user = db.users.get(email=email)
+    if not user:
+        # Don't reveal if email exists
+        return 200, "If that email exists, you'll receive a reset link"
+    
+    # Generate reset token
+    reset_token = secrets.token_urlsafe(32)
+    
+    db.password_reset_tokens.create({
+        'user_id': user.id,
+        'token': reset_token,
+        'expires_at': datetime.utcnow() + timedelta(hours=1)
+    })
+    
+    # Send email
+    reset_url = f"https://yourapp.com/reset-password?token={reset_token}"
+    await send_email_notification(
+        user.email,
+        "Password Reset Request",
+        f"Click here to reset your password: {reset_url}<br>This link expires in 1 hour."
+    )
+    
+    return 200, "If that email exists, you'll receive a reset link"
+
+
+# POST /api/auth/reset-password
+def reset_password(token, new_password):
+    # Verify token
+    token_record = db.password_reset_tokens.get(token=token)
+    
+    if not token_record or token_record.used:
+        return 400, "Invalid or expired reset token"
+    
+    if token_record.expires_at < datetime.utcnow():
+        return 400, "Reset token expired"
+    
+    # Validate new password
+    if len(new_password) < 8:
+        return 400, "Password must be at least 8 characters"
+    
+    # Hash new password
+    hashed = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
+    
+    # Update user password
+    db.users.update(token_record.user_id, {
+        'password': hashed.decode('utf-8')
+    })
+    
+    # Mark token as used
+    db.password_reset_tokens.update(token_record.id, {'used': True})
+    
+    # Revoke all refresh tokens for security
+    db.refresh_tokens.update(
+        {'user_id': token_record.user_id},
+        {'revoked': True}
+    )
+    
+    return 200, "Password reset successfully"
+4. Rate Limiting
+python
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+
+limiter = Limiter(key_func=get_remote_address)
+
+
+# Apply to login endpoint
+@app.post('/api/auth/login')
+@limiter.limit("5/minute")  # Max 5 attempts per minute
+async def login(request: Request):
+    # ... login logic ...
+    pass
+
+
+# Apply to message sending
+@app.post('/api/trips/{trip_id}/messages')
+@limiter.limit("20/minute")  # Max 20 messages per minute
+async def post_message(trip_id: int, request: Request):
+    # ... message logic ...
+    pass
+
+
+# Apply to password reset
+@app.post('/api/auth/forgot-password')
+@limiter.limit("3/hour")  # Max 3 attempts per hour
+async def forgot_password(request: Request):
+    # ... reset logic ...
+    pass
+5. Input Sanitization
+python
+import bleach
+from html import escape
+
+
+def sanitize_text_input(text):
+    """Remove any HTML/scripts from user input"""
+    # Strip HTML tags
+    cleaned = bleach.clean(text, tags=[], strip=True)
+    # Escape remaining special chars
+    cleaned = escape(cleaned)
+    return cleaned.strip()
+
+
+# Apply to all text inputs
+def post_message(trip_id, request):
+    message_text = sanitize_text_input(request.message)
+    # ... rest of logic ...
+6. CSRF Protection
+python
+from fastapi_csrf_protect import CsrfProtect
+
+
+@CsrfProtect.load_config
+def get_csrf_config():
+    return {
+        'secret_key': os.getenv('CSRF_SECRET'),
+        'cookie_secure': True,
+        'cookie_samesite': 'strict'
+    }
+
+
+# Require CSRF token for state-changing endpoints
+@app.post('/api/trips')
+async def create_trip(request: Request, csrf_protect: CsrfProtect = Depends()):
+    await csrf_protect.validate_csrf(request)
+    # ... create trip logic ...
+7. Audit Logging
+sql
+CREATE TABLE audit_log (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id),
+    action VARCHAR(100) NOT NULL,
+    resource_type VARCHAR(50),
+    resource_id INTEGER,
+    ip_address VARCHAR(50),
+    user_agent TEXT,
+    success BOOLEAN,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+
+CREATE INDEX idx_audit_user ON audit_log(user_id, created_at DESC);
+CREATE INDEX idx_audit_action ON audit_log(action, created_at DESC);
+python
+def log_audit_event(user_id, action, resource_type, resource_id, success, error=None, request=None):
+    db.audit_log.create({
+        'user_id': user_id,
+        'action': action,
+        'resource_type': resource_type,
+        'resource_id': resource_id,
+        'ip_address': request.client.host if request else None,
+        'user_agent': request.headers.get('User-Agent') if request else None,
+        'success': success,
+        'error_message': error
+    })
+
+
+# Log important actions
+def create_trip(request):
+    try:
+        trip = db.trips.create(...)
+        log_audit_event(
+            user_id=user.id,
+            action='CREATE_TRIP',
+            resource_type='trip',
+            resource_id=trip.id,
+            success=True,
+            request=request
+        )
+    except Exception as e:
+        log_audit_event(
+            user_id=user.id,
+            action='CREATE_TRIP',
+            resource_type='trip',
+            resource_id=None,
+            success=False,
+            error=str(e),
+            request=request
+        )
+8. HTTPS Enforcement
+python
+# Force HTTPS in production
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+
+
+if os.getenv('ENVIRONMENT') == 'production':
+    app.add_middleware(HTTPSRedirectMiddleware)
+
+
+# Secure cookies
+@app.post('/api/auth/login')
+def login(response: Response):
+    # Set tokens in HTTP-only cookies
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        secure=True,  # HTTPS only
+        samesite='strict',
+        max_age=3600
+    )
+9. Environment Variables
+Create .env file (NEVER commit this):
+bash
+# Database
+DATABASE_URL=postgresql://user:pass@localhost/transport_db
+
+
+# JWT
+JWT_SECRET=your-super-secret-jwt-key-change-this
+CSRF_SECRET=your-csrf-secret-key
+
+
+# Email
+SENDGRID_API_KEY=your-sendgrid-api-key
+SENDGRID_FROM_EMAIL=noreply@interactiveyouthtransport.com
+
+
+# SMS
+TWILIO_ACCOUNT_SID=your-twilio-sid
+TWILIO_AUTH_TOKEN=your-twilio-token
+TWILIO_PHONE_NUMBER=+1234567890
+
+
+# Google Maps
+GOOGLE_MAPS_API_KEY=your-google-maps-key
+
+
+# Flight API
+AVIATION_STACK_API_KEY=your-aviation-key
+
+
+# Environment
+ENVIRONMENT=production  # or 'development'
+10. Frontend Security Updates
+jsx
+// Store tokens in HTTP-only cookies (more secure than localStorage)
+// Update axios config
+import axios from 'axios';
+
+
+const api = axios.create({
+  baseURL: process.env.REACT_APP_API_URL,
+  withCredentials: true  // Send cookies with requests
+});
+
+
+// Refresh token automatically
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    if (error.response?.status === 401) {
+      // Try to refresh token
+      try {
+        await axios.post('/api/auth/refresh', {}, { withCredentials: true });
+        // Retry original request
+        return api.request(error.config);
+      } catch (refreshError) {
+        // Refresh failed, redirect to login
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
+Acceptance Criteria:
+* All passwords hashed with bcrypt
+* Existing plaintext passwords migrated
+* Refresh tokens working (can stay logged in for 30 days)
+* Password reset flow functional (email with link)
+* Rate limiting prevents brute force attacks
+* HTML/scripts stripped from user inputs
+* CSRF protection on state-changing endpoints
+* All sensitive actions logged to audit log
+* HTTPS enforced in production
+* Tokens stored in HTTP-only cookies
+* Auto-refresh keeps users logged in
+* Environment variables used for secrets
+* .env file never committed to git
+Testing Checklist:
+* Try logging in with old password (should fail)
+* Reset password successfully
+* Access token expires after 1 hour (gets refreshed)
+* Try 10 login attempts in 1 minute (gets rate limited)
+* Try injecting <script>alert('xss')</script> in message (gets stripped)
+* Check audit log for CREATE_TRIP action
+* Verify HTTP redirects to HTTPS
+* Logout works (revokes refresh token)
+Security Best Practices:
+* Never log passwords (even hashed)
+* Never expose user IDs in URLs if possible
+* Always validate user has access before returning data
+* Use parameterized queries (prevent SQL injection)
+* Keep dependencies updated
+* Run security audit: npm audit or pip-audit
+________________
+
+
+Summary
+You now have all 20 tasks with complete instructions. Follow them in order:
+Phase 1: Foundation (Tasks 1-4)
+* Basic auth, database, admin tools, dashboards
+Phase 2: Documents (Tasks 5-6)
+* File uploads and access control
+Phase 3: Maps (Task 7)
+* Static map display
+Phase 4: GPS Tracking (Tasks 8-11)
+* Mobile app, backend storage, live display, WebSocket
+Phase 5: Flight Tracking (Tasks 12-13)
+* API integration, auto-switching
+Phase 6: Messaging (Tasks 14-17)
+* Chat system, real-time messages, admin takeover
+Phase 7: Polish (Tasks 18-19)
+* Status updates, notifications
+Phase 8: Security (Task 20)
+* Production-ready hardening
+Copy each task into your AI coding tool (Cursor, Replit, v0, etc.) and complete them sequentially. Good luck!
+
+
+
+
+
+
+---
+
+
+SESSION 1 INSTRUCTIONS:
+Complete Tasks 1-4 (Foundation Phase):
+1. Basic Authentication System
+2. Database Schema for Core Entities
+3. Admin Trip Creation
+4. Role-Based Trip Dashboards
+
+
+Set up the project structure:
+- /backend (FastAPI)
+- /frontend (React + TypeScript)
+- .env.example file
+- .gitignore
+- README.md with setup instructions
+
+
+Initialize git repository and commit after each working task.
+
+
+Start now with Task 1.
