@@ -179,17 +179,32 @@ export const TripsList = () => {
                         View Details
                       </Button>
                       {(user?.role === 'admin' || user?.role === 'agent') && (
-                        <Button
-                          variant="default"
-                          size="sm"
-                          className="flex-1"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/trips/${trip.id}/edit`);
-                          }}
-                        >
-                          Edit
-                        </Button>
+                        <>
+                          {(trip.status === 'scheduled' || trip.status === 'in_progress') && (
+                            <Button
+                              variant={trip.status === 'in_progress' ? 'default' : 'secondary'}
+                              size="sm"
+                              className="flex-1"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/trips/${trip.id}/active`);
+                              }}
+                            >
+                              {trip.status === 'in_progress' ? 'Active' : 'Start'}
+                            </Button>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/trips/${trip.id}/edit`);
+                            }}
+                          >
+                            Edit
+                          </Button>
+                        </>
                       )}
                     </div>
                   </CardContent>

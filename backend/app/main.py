@@ -12,7 +12,8 @@ from app.auth import create_access_token, verify_token, authenticate_user
 from app.models import (
     LoginRequest, LoginResponse, UserResponse, 
     TripCreate, TripUpdate, TripResponse, 
-    DocumentResponse, MessageResponse
+    DocumentResponse, MessageResponse,
+    LocationUpdate, LocationUpdateResponse
 )
 
 app = FastAPI()
@@ -799,3 +800,202 @@ async def delete_document(document_id: int, request: Request = None, current_use
     log_document_access(document_id, user_id, "delete", client_ip, True)
     
     return {"message": "Document deleted successfully"}
+
+@app.post("/api/trips/{trip_id}/location", response_model=LocationUpdateResponse, status_code=status.HTTP_201_CREATED)
+async def post_location(trip_id: int, location_data: LocationUpdate, current_user: dict = Depends(get_current_user)):
+    """Post GPS location update for a trip (agent only)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get trip
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    # Verify user is the assigned agent or admin
+    if user_role != "admin" and trip["assigned_agent_id"] != user_id:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the assigned agent can post location updates"
+        )
+    
+    # Validate coordinates
+    if not (-90 <= location_data.latitude <= 90):
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid latitude (must be between -90 and 90)"
+        )
+    
+    if not (-180 <= location_data.longitude <= 180):
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid longitude (must be between -180 and 180)"
+        )
+    
+    # Insert location update
+    query = """
+        INSERT INTO location_updates (trip_id, agent_id, latitude, longitude, accuracy, source)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING *
+    """
+    cursor.execute(query, (
+        trip_id,
+        user_id,
+        location_data.latitude,
+        location_data.longitude,
+        location_data.accuracy,
+        'gps'
+    ))
+    
+    location = cursor.fetchone()
+    
+    # Update trip status to in_progress if it's scheduled
+    if trip["status"] == "scheduled":
+        cursor.execute("""
+            UPDATE trips 
+            SET status = 'in_progress', actual_start = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = %s
+        """, (trip_id,))
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    return LocationUpdateResponse(**location)
+
+@app.get("/api/trips/{trip_id}/location/latest")
+async def get_latest_location(trip_id: int, current_user: dict = Depends(get_current_user)):
+    """Get the most recent location update for a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get trip
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    # Verify user has access to this trip
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    # Get latest location
+    cursor.execute("""
+        SELECT *, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - timestamp)) as seconds_ago
+        FROM location_updates 
+        WHERE trip_id = %s 
+        ORDER BY timestamp DESC 
+        LIMIT 1
+    """, (trip_id,))
+    
+    location = cursor.fetchone()
+    
+    cursor.close()
+    conn.close()
+    
+    if not location:
+        return {"message": "No location updates yet"}
+    
+    return {
+        "latitude": float(location["latitude"]),
+        "longitude": float(location["longitude"]),
+        "accuracy": float(location["accuracy"]) if location["accuracy"] else None,
+        "timestamp": location["timestamp"].isoformat(),
+        "seconds_ago": int(location["seconds_ago"])
+    }
+
+@app.get("/api/trips/{trip_id}/location/history")
+async def get_location_history(
+    trip_id: int, 
+    limit: int = 100,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get location history for a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get trip
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    # Verify user has access to this trip
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    # Get location history
+    cursor.execute("""
+        SELECT latitude, longitude, accuracy, timestamp
+        FROM location_updates 
+        WHERE trip_id = %s 
+        ORDER BY timestamp DESC 
+        LIMIT %s
+    """, (trip_id, limit))
+    
+    locations = cursor.fetchall()
+    
+    cursor.close()
+    conn.close()
+    
+    return {
+        "locations": [
+            {
+                "latitude": float(loc["latitude"]),
+                "longitude": float(loc["longitude"]),
+                "accuracy": float(loc["accuracy"]) if loc["accuracy"] else None,
+                "timestamp": loc["timestamp"].isoformat()
+            }
+            for loc in locations
+        ]
+    }

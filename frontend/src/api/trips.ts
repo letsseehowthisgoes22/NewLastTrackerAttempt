@@ -46,6 +46,48 @@ export const updateTrip = async (token: string, tripId: number, tripData: Partia
   return response.data;
 };
 
+export interface LocationUpdate {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+}
+
+export interface LocationResponse {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  timestamp: string;
+  seconds_ago?: number;
+}
+
+export const postLocation = async (token: string, tripId: number, location: LocationUpdate): Promise<any> => {
+  const response = await api.post(`/api/trips/${tripId}/location`, location, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  return response.data;
+};
+
+export const getLatestLocation = async (token: string, tripId: number): Promise<LocationResponse> => {
+  const response = await api.get<LocationResponse>(`/api/trips/${tripId}/location/latest`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  return response.data;
+};
+
+export const getLocationHistory = async (token: string, tripId: number, limit: number = 100): Promise<{ locations: LocationResponse[] }> => {
+  const response = await api.get(`/api/trips/${tripId}/location/history`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+    params: { limit },
+  });
+  return response.data;
+};
+
 export const deleteTrip = async (token: string, tripId: number): Promise<void> => {
   await api.delete(`/api/trips/${tripId}`, {
     headers: {

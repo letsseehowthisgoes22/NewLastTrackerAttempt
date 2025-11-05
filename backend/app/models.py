@@ -89,6 +89,12 @@ class TripResponse(BaseModel):
     parent_name: Optional[str] = None
     assigned_clinician_name: Optional[str] = None
 
+class LocationUpdate(BaseModel):
+    latitude: float
+    longitude: float
+    accuracy: Optional[float] = None
+    timestamp: Optional[datetime] = None
+
 class LocationUpdateResponse(BaseModel):
     id: int
     trip_id: int
