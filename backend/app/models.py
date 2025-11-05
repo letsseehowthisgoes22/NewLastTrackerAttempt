@@ -18,6 +18,39 @@ class LoginResponse(BaseModel):
     token: str
     user: UserResponse
 
+class TripCreate(BaseModel):
+    client_name: str
+    pickup_location: str
+    dropoff_location: str
+    pickup_lat: Optional[Decimal] = None
+    pickup_lng: Optional[Decimal] = None
+    dropoff_lat: Optional[Decimal] = None
+    dropoff_lng: Optional[Decimal] = None
+    scheduled_start: datetime
+    scheduled_end: Optional[datetime] = None
+    flight_number: Optional[str] = None
+    airline: Optional[str] = None
+    assigned_agent_id: Optional[int] = None
+    assigned_parent_id: Optional[int] = None
+    assigned_clinician_id: Optional[int] = None
+
+class TripUpdate(BaseModel):
+    client_name: Optional[str] = None
+    pickup_location: Optional[str] = None
+    dropoff_location: Optional[str] = None
+    pickup_lat: Optional[Decimal] = None
+    pickup_lng: Optional[Decimal] = None
+    dropoff_lat: Optional[Decimal] = None
+    dropoff_lng: Optional[Decimal] = None
+    scheduled_start: Optional[datetime] = None
+    scheduled_end: Optional[datetime] = None
+    flight_number: Optional[str] = None
+    airline: Optional[str] = None
+    assigned_agent_id: Optional[int] = None
+    assigned_parent_id: Optional[int] = None
+    assigned_clinician_id: Optional[int] = None
+    status: Optional[str] = None
+
 class TripResponse(BaseModel):
     id: int
     client_name: str
