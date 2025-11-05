@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 export const TripsList = () => {
   const { token, user } = useAuth();
@@ -57,6 +56,28 @@ export const TripsList = () => {
       hour: '2-digit',
       minute: '2-digit',
     });
+  };
+
+  const getRelativeTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = date.getTime() - now.getTime();
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffMinutes = Math.floor(diffMs / (1000 * 60));
+
+    if (diffMs < 0) {
+      const absDays = Math.abs(diffDays);
+      const absHours = Math.abs(diffHours);
+      if (absDays > 0) return `${absDays} day${absDays !== 1 ? 's' : ''} ago`;
+      if (absHours > 0) return `${absHours} hour${absHours !== 1 ? 's' : ''} ago`;
+      return 'Just now';
+    }
+
+    if (diffDays > 0) return `Starts in ${diffDays} day${diffDays !== 1 ? 's' : ''}`;
+    if (diffHours > 0) return `Starts in ${diffHours} hour${diffHours !== 1 ? 's' : ''}`;
+    if (diffMinutes > 0) return `Starts in ${diffMinutes} minute${diffMinutes !== 1 ? 's' : ''}`;
+    return 'Starting soon';
   };
 
   if (loading) {
@@ -110,47 +131,55 @@ export const TripsList = () => {
               )}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Client</TableHead>
-                    <TableHead>Pickup</TableHead>
-                    <TableHead>Dropoff</TableHead>
-                    <TableHead>Scheduled Start</TableHead>
-                    <TableHead>Status</TableHead>
-                    {user?.role === 'admin' && <TableHead>Agent</TableHead>}
-                    <TableHead>Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {trips.map((trip) => (
-                    <TableRow key={trip.id} className="cursor-pointer hover:bg-gray-50">
-                      <TableCell className="font-medium">{trip.client_name}</TableCell>
-                      <TableCell className="max-w-xs truncate">{trip.pickup_location}</TableCell>
-                      <TableCell className="max-w-xs truncate">{trip.dropoff_location}</TableCell>
-                      <TableCell>{formatDate(trip.scheduled_start)}</TableCell>
-                      <TableCell>
-                        <Badge className={getStatusBadgeColor(trip.status)}>
-                          {trip.status.replace('_', ' ').toUpperCase()}
-                        </Badge>
-                      </TableCell>
-                      {user?.role === 'admin' && (
-                        <TableCell>{trip.agent_name || 'Unassigned'}</TableCell>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {trips.map((trip) => (
+                <Card key={trip.id} className="hover:shadow-lg transition-shadow cursor-pointer" onClick={() => navigate(`/trips/${trip.id}`)}>
+                  <CardHeader>
+                    <div className="flex justify-between items-start">
+                      <CardTitle className="text-lg">{trip.client_name}</CardTitle>
+                      <Badge className={getStatusBadgeColor(trip.status)}>
+                        {trip.status.replace('_', ' ')}
+                      </Badge>
+                    </div>
+                    <CardDescription className="text-sm text-gray-500">
+                      {getRelativeTime(trip.scheduled_start)}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2 text-sm">
+                      <div>
+                        <span className="font-medium text-gray-700">Pickup:</span>
+                        <p className="text-gray-600 truncate">{trip.pickup_location}</p>
+                      </div>
+                      <div>
+                        <span className="font-medium text-gray-700">Dropoff:</span>
+                        <p className="text-gray-600 truncate">{trip.dropoff_location}</p>
+                      </div>
+                      <div>
+                        <span className="font-medium text-gray-700">Date:</span>
+                        <p className="text-gray-600">{formatDate(trip.scheduled_start)}</p>
+                      </div>
+                      {user?.role === 'admin' && trip.agent_name && (
+                        <div>
+                          <span className="font-medium text-gray-700">Agent:</span>
+                          <p className="text-gray-600">{trip.agent_name}</p>
+                        </div>
                       )}
-                      <TableCell>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => navigate(`/trips/${trip.id}`)}
-                        >
-                          View Details
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full mt-4"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/trips/${trip.id}`);
+                      }}
+                    >
+                      View Details
+                    </Button>
+                  </CardContent>
+                </Card>
+              ))}
             </div>
           )}
         </CardContent>
