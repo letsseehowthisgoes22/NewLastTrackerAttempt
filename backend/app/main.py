@@ -297,11 +297,11 @@ async def get_trip(trip_id: int, current_user: dict = Depends(get_current_user))
 
 @app.put("/api/trips/{trip_id}", response_model=TripResponse)
 async def update_trip(trip_id: int, trip_data: TripUpdate, current_user: dict = Depends(get_current_user)):
-    """Update an existing trip (admin only)"""
-    if current_user["role"] != "admin":
+    """Update an existing trip (admin and agent roles)"""
+    if current_user["role"] not in ["admin", "agent"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only admins can update trips"
+            detail="Only admins and agents can update trips"
         )
     
     conn = get_db_connection()

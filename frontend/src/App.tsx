@@ -5,6 +5,7 @@ import { Dashboard } from './components/Dashboard';
 import { TripsList } from './components/TripsList';
 import { TripDetail } from './components/TripDetail';
 import { CreateTripForm } from './components/CreateTripForm';
+import { EditTripForm } from './components/EditTripForm';
 import { Navigation } from './components/Navigation';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -71,6 +72,14 @@ function AppContent() {
         element={
           <ProtectedRoute>
             <TripDetail />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/trips/:id/edit"
+        element={
+          <ProtectedRoute>
+            <EditTripForm />
           </ProtectedRoute>
         }
       />

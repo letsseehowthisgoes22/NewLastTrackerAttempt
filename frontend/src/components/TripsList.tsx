@@ -166,17 +166,32 @@ export const TripsList = () => {
                         </div>
                       )}
                     </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full mt-4"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/trips/${trip.id}`);
-                      }}
-                    >
-                      View Details
-                    </Button>
+                    <div className="flex gap-2 mt-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/trips/${trip.id}`);
+                        }}
+                      >
+                        View Details
+                      </Button>
+                      {(user?.role === 'admin' || user?.role === 'agent') && (
+                        <Button
+                          variant="default"
+                          size="sm"
+                          className="flex-1"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/trips/${trip.id}/edit`);
+                          }}
+                        >
+                          Edit
+                        </Button>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               ))}

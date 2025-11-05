@@ -11,7 +11,7 @@ import { DocumentsSection } from './DocumentsSection';
 
 export const TripDetail = () => {
   const { id } = useParams<{ id: string }>();
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const navigate = useNavigate();
   const [trip, setTrip] = useState<Trip | null>(null);
   const [loading, setLoading] = useState(true);
@@ -95,9 +95,16 @@ export const TripDetail = () => {
 
   return (
     <div className="max-w-4xl mx-auto px-4 py-8">
-      <Button onClick={() => navigate('/trips')} variant="outline" className="mb-4">
-        ← Back to Trips
-      </Button>
+      <div className="flex justify-between items-center mb-4">
+        <Button onClick={() => navigate('/trips')} variant="outline">
+          ← Back to Trips
+        </Button>
+        {(user?.role === 'admin' || user?.role === 'agent') && (
+          <Button onClick={() => navigate(`/trips/${trip.id}/edit`)}>
+            Edit Trip
+          </Button>
+        )}
+      </div>
 
       <Card>
         <CardHeader>
