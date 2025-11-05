@@ -1,8 +1,8 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse
-from typing import List
+from typing import List, Optional
 import psycopg
 import os
 import shutil
@@ -36,6 +36,21 @@ async def startup_event():
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 security = HTTPBearer()
+
+def log_document_access(document_id: Optional[int], user_id: int, action: str, ip_address: str, success: bool):
+    """Log document access for audit trail"""
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO document_access_log (document_id, user_id, action, ip_address, success)
+            VALUES (%s, %s, %s, %s, %s)
+        """, (document_id, user_id, action, ip_address, success))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"Failed to log document access: {e}")
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Verify JWT token and return current user"""
@@ -559,9 +574,11 @@ async def get_trip_messages(trip_id: int, current_user: dict = Depends(get_curre
 async def upload_document(
     trip_id: int, 
     file: UploadFile = File(...),
+    request: Request = None,
     current_user: dict = Depends(get_current_user)
 ):
     """Upload a document to a trip"""
+    client_ip = request.client.host if request else "unknown"
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -571,6 +588,7 @@ async def upload_document(
     if not trip:
         cursor.close()
         conn.close()
+        log_document_access(None, current_user["id"], "upload", client_ip, False)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Trip not found"
@@ -585,6 +603,7 @@ async def upload_document(
             trip["assigned_clinician_id"] != user_id):
             cursor.close()
             conn.close()
+            log_document_access(None, user_id, "upload", client_ip, False)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied"
@@ -650,11 +669,14 @@ async def upload_document(
     cursor.close()
     conn.close()
     
+    log_document_access(new_document["id"], user_id, "upload", client_ip, True)
+    
     return DocumentResponse(**document_with_uploader)
 
 @app.get("/api/documents/{document_id}/download")
-async def download_document(document_id: int, current_user: dict = Depends(get_current_user)):
+async def download_document(document_id: int, request: Request = None, current_user: dict = Depends(get_current_user)):
     """Download a document"""
+    client_ip = request.client.host if request else "unknown"
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -664,6 +686,7 @@ async def download_document(document_id: int, current_user: dict = Depends(get_c
     if not document:
         cursor.close()
         conn.close()
+        log_document_access(document_id, current_user["id"], "download", client_ip, False)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found"
@@ -675,6 +698,7 @@ async def download_document(document_id: int, current_user: dict = Depends(get_c
     if not trip:
         cursor.close()
         conn.close()
+        log_document_access(document_id, current_user["id"], "download", client_ip, False)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Trip not found"
@@ -689,6 +713,7 @@ async def download_document(document_id: int, current_user: dict = Depends(get_c
             trip["assigned_clinician_id"] != user_id):
             cursor.close()
             conn.close()
+            log_document_access(document_id, user_id, "download", client_ip, False)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied"
@@ -700,10 +725,13 @@ async def download_document(document_id: int, current_user: dict = Depends(get_c
     file_path = Path(".") / document["file_url"].lstrip("/")
     
     if not file_path.exists():
+        log_document_access(document_id, user_id, "download", client_ip, False)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="File not found on server"
         )
+    
+    log_document_access(document_id, user_id, "download", client_ip, True)
     
     return FileResponse(
         path=file_path,
@@ -712,8 +740,9 @@ async def download_document(document_id: int, current_user: dict = Depends(get_c
     )
 
 @app.delete("/api/documents/{document_id}")
-async def delete_document(document_id: int, current_user: dict = Depends(get_current_user)):
+async def delete_document(document_id: int, request: Request = None, current_user: dict = Depends(get_current_user)):
     """Delete a document"""
+    client_ip = request.client.host if request else "unknown"
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -723,10 +752,14 @@ async def delete_document(document_id: int, current_user: dict = Depends(get_cur
     if not document:
         cursor.close()
         conn.close()
+        log_document_access(document_id, current_user["id"], "delete", client_ip, False)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Document not found"
         )
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (document["trip_id"],))
+    trip = cursor.fetchone()
     
     user_id = current_user["id"]
     user_role = current_user["role"]
@@ -734,10 +767,23 @@ async def delete_document(document_id: int, current_user: dict = Depends(get_cur
     if user_role != "admin" and document["uploaded_by_id"] != user_id:
         cursor.close()
         conn.close()
+        log_document_access(document_id, user_id, "delete", client_ip, False)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only admins or the uploader can delete documents"
         )
+    
+    if trip and user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            log_document_access(document_id, user_id, "delete", client_ip, False)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
     
     file_path = Path(".") / document["file_url"].lstrip("/")
     
@@ -749,5 +795,7 @@ async def delete_document(document_id: int, current_user: dict = Depends(get_cur
     
     cursor.close()
     conn.close()
+    
+    log_document_access(document_id, user_id, "delete", client_ip, True)
     
     return {"message": "Document deleted successfully"}
