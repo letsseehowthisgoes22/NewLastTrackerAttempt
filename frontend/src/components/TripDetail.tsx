@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DocumentsSection } from './DocumentsSection';
+import { TripMap } from './TripMap';
 
 export const TripDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -140,6 +141,23 @@ export const TripDetail = () => {
                 <dt className="text-sm font-medium text-gray-500">Dropoff Location</dt>
                 <dd className="text-sm text-gray-900">{trip.dropoff_location}</dd>
               </div>
+            </dl>
+            
+            {/* Map Display */}
+            {trip.pickup_lat && trip.pickup_lng && trip.dropoff_lat && trip.dropoff_lng && (
+              <div className="mt-4">
+                <TripMap
+                  pickupLat={trip.pickup_lat}
+                  pickupLng={trip.pickup_lng}
+                  dropoffLat={trip.dropoff_lat}
+                  dropoffLng={trip.dropoff_lng}
+                  pickupLocation={trip.pickup_location}
+                  dropoffLocation={trip.dropoff_location}
+                />
+              </div>
+            )}
+            
+            <dl className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
               <div>
                 <dt className="text-sm font-medium text-gray-500">Scheduled Start</dt>
                 <dd className="text-sm text-gray-900">{formatDate(trip.scheduled_start)}</dd>
