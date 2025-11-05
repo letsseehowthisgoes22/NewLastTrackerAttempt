@@ -1,8 +1,12 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import FileResponse
 from typing import List
 import psycopg
+import os
+import shutil
+from pathlib import Path
 from app.database import get_db_connection, init_db
 from app.auth import create_access_token, verify_token, authenticate_user
 from app.models import (
@@ -22,9 +26,14 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+UPLOAD_DIR = Path("./uploads")
+ALLOWED_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.docx', '.doc'}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB in bytes
+
 @app.on_event("startup")
 async def startup_event():
     init_db()
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 security = HTTPBearer()
 
@@ -528,3 +537,200 @@ async def get_trip_messages(trip_id: int, current_user: dict = Depends(get_curre
     conn.close()
     
     return [MessageResponse(**msg) for msg in messages]
+
+@app.post("/api/trips/{trip_id}/documents", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+async def upload_document(
+    trip_id: int, 
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """Upload a document to a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    file_extension = Path(file.filename).suffix.lower()
+    if file_extension not in ALLOWED_EXTENSIONS:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File type not allowed. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"
+        )
+    
+    contents = await file.read()
+    file_size = len(contents)
+    
+    if file_size > MAX_FILE_SIZE:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File size exceeds maximum allowed size of {MAX_FILE_SIZE / (1024 * 1024)}MB"
+        )
+    
+    trip_upload_dir = UPLOAD_DIR / f"trip_{trip_id}"
+    trip_upload_dir.mkdir(parents=True, exist_ok=True)
+    
+    safe_filename = f"{os.urandom(16).hex()}_{file.filename}"
+    file_path = trip_upload_dir / safe_filename
+    
+    with open(file_path, "wb") as f:
+        f.write(contents)
+    
+    file_url = f"/uploads/trip_{trip_id}/{safe_filename}"
+    
+    query = """
+        INSERT INTO documents (trip_id, uploaded_by_id, filename, file_url, file_type, file_size)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        RETURNING *
+    """
+    cursor.execute(query, (
+        trip_id,
+        user_id,
+        file.filename,
+        file_url,
+        file.content_type,
+        file_size
+    ))
+    
+    new_document = cursor.fetchone()
+    conn.commit()
+    
+    query_with_uploader = """
+        SELECT d.*, u.first_name || ' ' || u.last_name as uploader_name
+        FROM documents d
+        LEFT JOIN users u ON d.uploaded_by_id = u.id
+        WHERE d.id = %s
+    """
+    cursor.execute(query_with_uploader, (new_document["id"],))
+    document_with_uploader = cursor.fetchone()
+    
+    cursor.close()
+    conn.close()
+    
+    return DocumentResponse(**document_with_uploader)
+
+@app.get("/api/documents/{document_id}/download")
+async def download_document(document_id: int, current_user: dict = Depends(get_current_user)):
+    """Download a document"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM documents WHERE id = %s", (document_id,))
+    document = cursor.fetchone()
+    
+    if not document:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found"
+        )
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (document["trip_id"],))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    cursor.close()
+    conn.close()
+    
+    file_path = Path(".") / document["file_url"].lstrip("/")
+    
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found on server"
+        )
+    
+    return FileResponse(
+        path=file_path,
+        filename=document["filename"],
+        media_type="application/octet-stream"
+    )
+
+@app.delete("/api/documents/{document_id}")
+async def delete_document(document_id: int, current_user: dict = Depends(get_current_user)):
+    """Delete a document"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM documents WHERE id = %s", (document_id,))
+    document = cursor.fetchone()
+    
+    if not document:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin" and document["uploaded_by_id"] != user_id:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins or the uploader can delete documents"
+        )
+    
+    file_path = Path(".") / document["file_url"].lstrip("/")
+    
+    if file_path.exists():
+        os.remove(file_path)
+    
+    cursor.execute("DELETE FROM documents WHERE id = %s", (document_id,))
+    conn.commit()
+    
+    cursor.close()
+    conn.close()
+    
+    return {"message": "Document deleted successfully"}

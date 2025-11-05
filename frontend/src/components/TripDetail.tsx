@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { DocumentsSection } from './DocumentsSection';
 
 export const TripDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -207,13 +208,12 @@ export const TripDetail = () => {
             </dl>
           </div>
 
-          <div className="border-t pt-6">
-            <p className="text-sm text-gray-600">
-              Future features will include real-time location tracking, document uploads, and messaging capabilities.
-            </p>
-          </div>
         </CardContent>
       </Card>
+
+      <div className="mt-6">
+        <DocumentsSection tripId={trip.id} />
+      </div>
     </div>
   );
 };

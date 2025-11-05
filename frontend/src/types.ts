@@ -62,3 +62,15 @@ export interface TripCreate {
   assigned_parent_id: number | null;
   assigned_clinician_id: number | null;
 }
+
+export interface Document {
+  id: number;
+  trip_id: number;
+  uploaded_by_id: number | null;
+  filename: string;
+  file_url: string;
+  file_type: string | null;
+  file_size: number | null;
+  uploaded_at: string;
+  uploader_name: string | null;
+}

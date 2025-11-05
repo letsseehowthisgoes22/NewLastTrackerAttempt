@@ -5,6 +5,7 @@ import { Dashboard } from './components/Dashboard';
 import { TripsList } from './components/TripsList';
 import { TripDetail } from './components/TripDetail';
 import { CreateTripForm } from './components/CreateTripForm';
+import { Navigation } from './components/Navigation';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -17,7 +18,14 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return user ? <>{children}</> : <Navigate to="/login" />;
+  return user ? (
+    <>
+      <Navigation />
+      {children}
+    </>
+  ) : (
+    <Navigate to="/login" />
+  );
 }
 
 function AppContent() {
