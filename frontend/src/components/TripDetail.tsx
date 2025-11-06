@@ -153,6 +153,8 @@ export const TripDetail = () => {
                   dropoffLng={trip.dropoff_lng}
                   pickupLocation={trip.pickup_location}
                   dropoffLocation={trip.dropoff_location}
+                  tripId={trip.id}
+                  isLive={trip.status === 'in_progress'}
                 />
               </div>
             )}
