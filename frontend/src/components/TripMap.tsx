@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { getLatestLocation, getLocationHistory } from '../api/trips';
+import { getLatestLocation, getLocationHistory, getFlightInfo, FlightInfo } from '../api/trips';
 import { useAuth } from '../context/AuthContext';
 import { io, Socket } from 'socket.io-client';
 
@@ -225,6 +225,8 @@ export const TripMap: React.FC<TripMapProps> = ({
   const [locationHistory, setLocationHistory] = useState<Array<[number, number]>>([]);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
+  const [flightInfo, setFlightInfo] = useState<FlightInfo | null>(null);
+  const [flightInfoError, setFlightInfoError] = useState<string | null>(null);
 
   const centerLat = (pickupLat + dropoffLat) / 2;
   const centerLng = (pickupLng + dropoffLng) / 2;
@@ -244,7 +246,24 @@ export const TripMap: React.FC<TripMapProps> = ({
       }
     };
 
+    const fetchFlight = async () => {
+      try {
+        const data = await getFlightInfo(token, tripId);
+        setFlightInfo(data);
+        setFlightInfoError(null);
+      } catch (error: any) {
+        if (error.response?.status === 404) {
+          setFlightInfoError(null);
+        } else if (error.response?.status === 503) {
+          setFlightInfoError('Flight information temporarily unavailable');
+        } else {
+          console.error('Failed to fetch flight info:', error);
+        }
+      }
+    };
+
     fetchHistory();
+    fetchFlight();
   }, [isLive, tripId, token]);
 
   const handleLocationUpdate = (location: { lat: number; lng: number } | null, timestamp: string | null) => {
@@ -391,6 +410,75 @@ export const TripMap: React.FC<TripMapProps> = ({
                 Last updated: {getTimeAgo(lastUpdate)}
               </span>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Flight information card */}
+      {flightInfo && (
+        <div className="bg-blue-50 px-4 py-3 border-t">
+          <div className="flex items-start gap-3">
+            <div className="text-2xl">✈️</div>
+            <div className="flex-1">
+              <div className="font-semibold text-blue-900 mb-1">
+                {flightInfo.flight_number} - {flightInfo.airline}
+              </div>
+              <div className="text-sm text-blue-800 mb-2">
+                Status: <span className={`font-medium ${
+                  flightInfo.status === 'active' ? 'text-green-700' :
+                  flightInfo.status === 'landed' ? 'text-gray-700' :
+                  flightInfo.status === 'scheduled' ? 'text-blue-700' :
+                  'text-orange-700'
+                }`}>
+                  {flightInfo.status.charAt(0).toUpperCase() + flightInfo.status.slice(1)}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <div className="font-medium text-blue-900">Departure</div>
+                  <div className="text-blue-800">{flightInfo.departure_airport}</div>
+                  {flightInfo.departure_gate && (
+                    <div className="text-xs text-blue-700">Gate: {flightInfo.departure_gate}</div>
+                  )}
+                  {flightInfo.departure_time && (
+                    <div className="text-xs text-blue-700">
+                      {new Date(flightInfo.departure_time).toLocaleString()}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <div className="font-medium text-blue-900">Arrival</div>
+                  <div className="text-blue-800">{flightInfo.arrival_airport}</div>
+                  {flightInfo.arrival_gate && (
+                    <div className="text-xs text-blue-700">Gate: {flightInfo.arrival_gate}</div>
+                  )}
+                  {flightInfo.arrival_time && (
+                    <div className="text-xs text-blue-700">
+                      {new Date(flightInfo.arrival_time).toLocaleString()}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {flightInfo.current_position && (
+                <div className="mt-2 text-xs text-blue-700">
+                  {flightInfo.current_position.altitude && (
+                    <span className="mr-3">Altitude: {flightInfo.current_position.altitude}ft</span>
+                  )}
+                  {flightInfo.current_position.speed && (
+                    <span>Speed: {flightInfo.current_position.speed}mph</span>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Flight info error */}
+      {flightInfoError && (
+        <div className="bg-yellow-50 px-4 py-2 border-t">
+          <div className="text-sm text-yellow-800">
+            ⚠️ {flightInfoError}
           </div>
         </div>
       )}

@@ -16,6 +16,7 @@ from app.models import (
     LocationUpdate, LocationUpdateResponse
 )
 from app.websocket import sio, broadcast_location_update
+from app.flight_tracking import fetch_flight_status
 import socketio
 
 app = FastAPI()
@@ -1010,3 +1011,59 @@ async def get_location_history(
             for loc in locations
         ]
     }
+
+@app.get("/api/trips/{trip_id}/flight")
+async def get_flight_status(trip_id: int, current_user: dict = Depends(get_current_user)):
+    """Get flight status for a trip with a flight number"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get trip
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    cursor.close()
+    conn.close()
+    
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    # Verify user has access to this trip
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    if not trip["flight_number"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No flight number associated with this trip"
+        )
+    
+    flight_info = fetch_flight_status(trip["flight_number"])
+    
+    if not flight_info:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to fetch flight status. API may be unavailable or flight not found."
+        )
+    
+    if flight_info.get('aircraft_lat') and flight_info.get('aircraft_lng'):
+        flight_info['current_position'] = {
+            'latitude': flight_info['aircraft_lat'],
+            'longitude': flight_info['aircraft_lng'],
+            'altitude': flight_info.get('aircraft_altitude'),
+            'speed': flight_info.get('aircraft_speed')
+        }
+    
+    return flight_info
