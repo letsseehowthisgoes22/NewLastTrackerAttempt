@@ -142,7 +142,8 @@ function LiveLocationUpdater({
 
     onConnectionStatusChange('connecting');
 
-    const socket = io('http://localhost:8000', {
+    const WS_URL = import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_URL || window.location.origin;
+    const socket = io(WS_URL, {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,
