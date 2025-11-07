@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse
 from typing import List, Optional
+from datetime import datetime
 import psycopg
 import os
 import shutil
@@ -13,8 +14,15 @@ from app.models import (
     LoginRequest, LoginResponse, UserResponse, 
     TripCreate, TripUpdate, TripResponse, 
     DocumentResponse, MessageResponse,
-    LocationUpdate, LocationUpdateResponse
+    LocationUpdate, LocationUpdateResponse,
+    MessageCreate, MessageResponseItem, MessagesResponse, UnreadCountResponse
 )
+from app.websocket import sio, broadcast_location_update
+from app.flight_tracking import fetch_flight_status
+from app.tracking_mode import determine_tracking_mode, update_trip_tracking_mode
+from app.rate_limiter import rate_limiter
+import socketio
+import html
 
 app = FastAPI()
 
@@ -26,6 +34,8 @@ app.add_middleware(
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
+
+socket_app = socketio.ASGIApp(sio, other_asgi_app=app, socketio_path='socket.io')
 
 UPLOAD_DIR = Path("./uploads")
 ALLOWED_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.docx', '.doc'}
@@ -525,51 +535,6 @@ async def get_trip_documents(trip_id: int, current_user: dict = Depends(get_curr
     
     return [DocumentResponse(**doc) for doc in documents]
 
-@app.get("/api/trips/{trip_id}/messages", response_model=List[MessageResponse])
-async def get_trip_messages(trip_id: int, current_user: dict = Depends(get_current_user)):
-    """Get all messages for a trip"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
-    trip = cursor.fetchone()
-    
-    if not trip:
-        cursor.close()
-        conn.close()
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Trip not found"
-        )
-    
-    user_id = current_user["id"]
-    user_role = current_user["role"]
-    
-    if user_role != "admin":
-        if (trip["assigned_agent_id"] != user_id and 
-            trip["assigned_parent_id"] != user_id and 
-            trip["assigned_clinician_id"] != user_id):
-            cursor.close()
-            conn.close()
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
-    
-    query = """
-        SELECT m.*, u.first_name || ' ' || u.last_name as sender_name
-        FROM messages m
-        LEFT JOIN users u ON m.sender_id = u.id
-        WHERE m.trip_id = %s
-        ORDER BY m.sent_at ASC
-    """
-    cursor.execute(query, (trip_id,))
-    messages = cursor.fetchall()
-    
-    cursor.close()
-    conn.close()
-    
-    return [MessageResponse(**msg) for msg in messages]
 
 @app.post("/api/trips/{trip_id}/documents", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_document(
@@ -877,6 +842,13 @@ async def post_location(trip_id: int, location_data: LocationUpdate, current_use
     cursor.close()
     conn.close()
     
+    await broadcast_location_update(trip_id, {
+        'latitude': float(location['latitude']),
+        'longitude': float(location['longitude']),
+        'accuracy': float(location['accuracy']) if location['accuracy'] else None,
+        'timestamp': location['timestamp'].isoformat()
+    })
+    
     return LocationUpdateResponse(**location)
 
 @app.get("/api/trips/{trip_id}/location/latest")
@@ -998,4 +970,718 @@ async def get_location_history(
             }
             for loc in locations
         ]
+    }
+
+@app.get("/api/trips/{trip_id}/flight")
+async def get_flight_status(trip_id: int, current_user: dict = Depends(get_current_user)):
+    """Get flight status for a trip with a flight number"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get trip
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    cursor.close()
+    conn.close()
+    
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    # Verify user has access to this trip
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    if not trip["flight_number"]:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No flight number associated with this trip"
+        )
+    
+    flight_info = fetch_flight_status(trip["flight_number"])
+    
+    if not flight_info:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to fetch flight status. API may be unavailable or flight not found."
+        )
+    
+    if flight_info.get('aircraft_lat') and flight_info.get('aircraft_lng'):
+        flight_info['current_position'] = {
+            'latitude': flight_info['aircraft_lat'],
+            'longitude': flight_info['aircraft_lng'],
+            'altitude': flight_info.get('aircraft_altitude'),
+            'speed': flight_info.get('aircraft_speed')
+        }
+    
+    return flight_info
+
+@app.get("/api/trips/{trip_id}/tracking-mode")
+async def get_tracking_mode(trip_id: int, current_user: dict = Depends(get_current_user)):
+    """Get current tracking mode for a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    cursor.close()
+    conn.close()
+    
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    mode = determine_tracking_mode(trip_id)
+    
+    new_mode = update_trip_tracking_mode(trip_id)
+    if new_mode:
+        await sio.emit('tracking_mode_changed', {
+            'mode': new_mode,
+            'timestamp': datetime.now().isoformat()
+        }, room=f'trip_{trip_id}')
+    
+    return {
+        'mode': mode,
+        'timestamp': datetime.now().isoformat()
+    }
+
+@app.post("/api/trips/{trip_id}/messages", status_code=status.HTTP_201_CREATED)
+async def post_message(trip_id: int, message_data: MessageCreate, current_user: dict = Depends(get_current_user)):
+    """Send a new message to a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    if not rate_limiter.check_rate_limit(user_id, max_requests=20, window_minutes=1):
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded. Maximum 20 messages per minute."
+        )
+    
+    message_text = message_data.message.strip()
+    
+    if not message_text:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Message cannot be empty"
+        )
+    
+    if len(message_text) > 5000:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Message too long (max 5000 characters)"
+        )
+    
+    message_text = html.escape(message_text)
+    
+    cursor.execute("""
+        INSERT INTO messages (trip_id, sender_id, message_text, sent_at, read_by_recipient)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id, sent_at
+    """, (trip_id, user_id, message_text, datetime.now(), False))
+    
+    result = cursor.fetchone()
+    message_id = result['id']
+    sent_at = result['sent_at']
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    return {
+        'id': message_id,
+        'trip_id': trip_id,
+        'sender': {
+            'id': user_id,
+            'name': f"{current_user['first_name']} {current_user['last_name']}",
+            'role': user_role
+        },
+        'message': message_text,
+        'sent_at': sent_at.isoformat(),
+        'read': False,
+        'is_mine': True
+    }
+
+@app.get("/api/trips/{trip_id}/messages")
+async def get_messages(
+    trip_id: int, 
+    current_user: dict = Depends(get_current_user),
+    limit: int = 100,
+    since: Optional[str] = None
+):
+    """Retrieve all messages for a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    if since:
+        try:
+            from dateutil.parser import parse
+            parse(since)
+        except (ValueError, TypeError):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid 'since' timestamp format. Use ISO 8601 format."
+            )
+    
+    query = """
+        SELECT m.*, u.first_name, u.last_name, u.role
+        FROM messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE m.trip_id = %s
+    """
+    params = [trip_id]
+    
+    if since:
+        query += " AND m.sent_at > %s"
+        params.append(since)
+    
+    query += " ORDER BY m.sent_at ASC LIMIT %s"
+    params.append(limit)
+    
+    cursor.execute(query, params)
+    messages = cursor.fetchall()
+    
+    cursor.close()
+    conn.close()
+    
+    result = []
+    for msg in messages:
+        result.append({
+            'id': msg['id'],
+            'sender': {
+                'id': msg['sender_id'],
+                'name': f"{msg['first_name']} {msg['last_name']}",
+                'role': msg['role']
+            },
+            'message': msg['message_text'],
+            'sent_at': msg['sent_at'].isoformat(),
+            'read': msg['read_by_recipient'],
+            'is_mine': msg['sender_id'] == user_id
+        })
+    
+    return {
+        'messages': result,
+        'count': len(result)
+    }
+
+@app.put("/api/messages/{message_id}/read")
+async def mark_message_read(message_id: int, current_user: dict = Depends(get_current_user)):
+    """Mark a message as read"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM messages WHERE id = %s", (message_id,))
+    message = cursor.fetchone()
+    
+    if not message:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message not found"
+        )
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (message['trip_id'],))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    cursor.execute(
+        "UPDATE messages SET read_by_recipient = TRUE WHERE id = %s",
+        (message_id,)
+    )
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    return {'success': True}
+
+@app.get("/api/trips/{trip_id}/messages/unread")
+async def get_unread_count(trip_id: int, current_user: dict = Depends(get_current_user)):
+    """Get count of unread messages for a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    cursor.execute("""
+        SELECT COUNT(*) as count
+        FROM messages
+        WHERE trip_id = %s AND read_by_recipient = FALSE AND sender_id != %s
+    """, (trip_id, user_id))
+    
+    result = cursor.fetchone()
+    unread_count = result['count']
+    
+    cursor.close()
+    conn.close()
+    
+    return {'unread_count': unread_count}
+
+@app.post("/api/trips/{trip_id}/chat/takeover")
+async def takeover_chat(
+    trip_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Admin takes over chat control"""
+    if current_user['role'] != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        UPDATE trips
+        SET chat_admin_takeover = TRUE,
+            chat_taken_over_by = %s,
+            chat_takeover_at = NOW()
+        WHERE id = %s
+    """, (current_user['id'], trip_id))
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    admin_name = f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip()
+    if not admin_name:
+        admin_name = current_user['email']
+    
+    await sio.emit('chat_takeover', {
+        'trip_id': trip_id,
+        'admin_name': admin_name,
+        'taken_over': True
+    }, room=f'trip_{trip_id}')
+    
+    return {"success": True, "message": "Chat taken over successfully"}
+
+@app.post("/api/trips/{trip_id}/chat/release")
+async def release_chat(
+    trip_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Admin releases chat control"""
+    if current_user['role'] != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        UPDATE trips
+        SET chat_admin_takeover = FALSE,
+            chat_taken_over_by = NULL,
+            chat_takeover_at = NULL
+        WHERE id = %s
+    """, (trip_id,))
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    await sio.emit('chat_takeover', {
+        'trip_id': trip_id,
+        'taken_over': False
+    }, room=f'trip_{trip_id}')
+    
+    return {"success": True, "message": "Chat released successfully"}
+
+@app.put("/api/trips/{trip_id}/status")
+async def update_trip_status(
+    trip_id: int,
+    status: str,
+    notes: str = "",
+    current_user: dict = Depends(get_current_user)
+):
+    """Update trip status"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get trip
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Trip not found")
+    
+    if current_user['role'] != 'admin' and trip['assigned_agent_id'] != current_user['id']:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=403, detail="Only assigned agent or admin can update status")
+    
+    # Validate status
+    valid_statuses = ['scheduled', 'in_progress', 'completed', 'cancelled']
+    if status not in valid_statuses:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
+    
+    old_status = trip['status']
+    
+    cursor.execute("""
+        INSERT INTO trip_status_history (trip_id, changed_by_id, old_status, new_status, notes)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (trip_id, current_user['id'], old_status, status, notes))
+    
+    # Update trip status
+    update_fields = ['status = %s', 'updated_at = NOW()']
+    update_values = [status]
+    
+    if status == 'in_progress' and not trip['actual_start']:
+        update_fields.append('actual_start = NOW()')
+    elif status == 'completed' and not trip['actual_end']:
+        update_fields.append('actual_end = NOW()')
+    
+    update_values.append(trip_id)
+    cursor.execute(f"""
+        UPDATE trips
+        SET {', '.join(update_fields)}
+        WHERE id = %s
+    """, update_values)
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    user_name = f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip()
+    if not user_name:
+        user_name = current_user['email']
+    
+    await sio.emit('status_changed', {
+        'trip_id': trip_id,
+        'old_status': old_status,
+        'new_status': status,
+        'changed_by': user_name,
+        'timestamp': datetime.now().isoformat()
+    }, room=f'trip_{trip_id}')
+    
+    return {
+        'success': True,
+        'trip_id': trip_id,
+        'status': status
+    }
+
+@app.get("/api/trips/{trip_id}/status-history")
+async def get_status_history(
+    trip_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get status change history for a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get trip to verify access
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Trip not found")
+    
+    # Verify user has access to this trip
+    if current_user['role'] not in ['admin', 'agent']:
+        if (trip['assigned_parent_id'] != current_user['id'] and 
+            trip['assigned_clinician_id'] != current_user['id']):
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    cursor.execute("""
+        SELECT 
+            sh.id,
+            sh.old_status,
+            sh.new_status,
+            sh.changed_at,
+            sh.notes,
+            u.first_name,
+            u.last_name,
+            u.email
+        FROM trip_status_history sh
+        LEFT JOIN users u ON sh.changed_by_id = u.id
+        WHERE sh.trip_id = %s
+        ORDER BY sh.changed_at DESC
+    """, (trip_id,))
+    
+    history = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    formatted_history = []
+    for record in history:
+        changed_by = f"{record['first_name']} {record['last_name']}".strip()
+        if not changed_by:
+            changed_by = record['email']
+        
+        formatted_history.append({
+            'id': record['id'],
+            'old_status': record['old_status'],
+            'new_status': record['new_status'],
+            'changed_by': changed_by,
+            'changed_at': record['changed_at'].isoformat() if record['changed_at'] else None,
+            'notes': record['notes']
+        })
+    
+    return {'history': formatted_history}
+
+@app.get("/api/users/me/notification-preferences")
+async def get_notification_preferences(
+    current_user: dict = Depends(get_current_user)
+):
+    """Get notification preferences for current user"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM notification_preferences
+        WHERE user_id = %s
+    """, (current_user['id'],))
+    
+    prefs = cursor.fetchone()
+    
+    if not prefs:
+        cursor.execute("""
+            INSERT INTO notification_preferences (user_id)
+            VALUES (%s)
+            RETURNING *
+        """, (current_user['id'],))
+        prefs = cursor.fetchone()
+        conn.commit()
+    
+    cursor.close()
+    conn.close()
+    
+    return {
+        'user_id': prefs['user_id'],
+        'email_trip_started': prefs['email_trip_started'],
+        'email_trip_completed': prefs['email_trip_completed'],
+        'email_new_message': prefs['email_new_message'],
+        'email_status_changed': prefs['email_status_changed'],
+        'sms_trip_started': prefs['sms_trip_started'],
+        'sms_trip_completed': prefs['sms_trip_completed'],
+        'sms_new_message': prefs['sms_new_message'],
+        'sms_status_changed': prefs['sms_status_changed']
+    }
+
+@app.put("/api/users/me/notification-preferences")
+async def update_notification_preferences(
+    email_trip_started: bool = None,
+    email_trip_completed: bool = None,
+    email_new_message: bool = None,
+    email_status_changed: bool = None,
+    sms_trip_started: bool = None,
+    sms_trip_completed: bool = None,
+    sms_new_message: bool = None,
+    sms_status_changed: bool = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Update notification preferences for current user"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM notification_preferences
+        WHERE user_id = %s
+    """, (current_user['id'],))
+    
+    prefs = cursor.fetchone()
+    
+    if not prefs:
+        cursor.execute("""
+            INSERT INTO notification_preferences (user_id)
+            VALUES (%s)
+        """, (current_user['id'],))
+        conn.commit()
+    
+    update_fields = []
+    update_values = []
+    
+    if email_trip_started is not None:
+        update_fields.append('email_trip_started = %s')
+        update_values.append(email_trip_started)
+    if email_trip_completed is not None:
+        update_fields.append('email_trip_completed = %s')
+        update_values.append(email_trip_completed)
+    if email_new_message is not None:
+        update_fields.append('email_new_message = %s')
+        update_values.append(email_new_message)
+    if email_status_changed is not None:
+        update_fields.append('email_status_changed = %s')
+        update_values.append(email_status_changed)
+    if sms_trip_started is not None:
+        update_fields.append('sms_trip_started = %s')
+        update_values.append(sms_trip_started)
+    if sms_trip_completed is not None:
+        update_fields.append('sms_trip_completed = %s')
+        update_values.append(sms_trip_completed)
+    if sms_new_message is not None:
+        update_fields.append('sms_new_message = %s')
+        update_values.append(sms_new_message)
+    if sms_status_changed is not None:
+        update_fields.append('sms_status_changed = %s')
+        update_values.append(sms_status_changed)
+    
+    if update_fields:
+        update_fields.append('updated_at = NOW()')
+        update_values.append(current_user['id'])
+        
+        cursor.execute(f"""
+            UPDATE notification_preferences
+            SET {', '.join(update_fields)}
+            WHERE user_id = %s
+        """, update_values)
+        
+        conn.commit()
+    
+    cursor.execute("""
+        SELECT * FROM notification_preferences
+        WHERE user_id = %s
+    """, (current_user['id'],))
+    
+    prefs = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    
+    return {
+        'success': True,
+        'preferences': {
+            'user_id': prefs['user_id'],
+            'email_trip_started': prefs['email_trip_started'],
+            'email_trip_completed': prefs['email_trip_completed'],
+            'email_new_message': prefs['email_new_message'],
+            'email_status_changed': prefs['email_status_changed'],
+            'sms_trip_started': prefs['sms_trip_started'],
+            'sms_trip_completed': prefs['sms_trip_completed'],
+            'sms_new_message': prefs['sms_new_message'],
+            'sms_status_changed': prefs['sms_status_changed']
+        }
     }

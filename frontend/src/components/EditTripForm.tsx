@@ -113,14 +113,18 @@ export const EditTripForm = () => {
   const onPickupPlaceChanged = () => {
     if (pickupAutocomplete) {
       const place = pickupAutocomplete.getPlace();
-      if (place.geometry?.location) {
-        setFormData(prev => ({
-          ...prev,
-          pickup_location: place.formatted_address || '',
-          pickup_lat: place.geometry!.location!.lat(),
-          pickup_lng: place.geometry!.location!.lng(),
-        }));
-      }
+      if (!place?.geometry?.location) return;
+
+      const location = place.geometry.location;
+      const lat = location.lat();
+      const lng = location.lng();
+      
+      setFormData(prev => ({
+        ...prev,
+        pickup_location: place.formatted_address || '',
+        pickup_lat: lat,
+        pickup_lng: lng,
+      }));
     }
   };
 
@@ -131,14 +135,18 @@ export const EditTripForm = () => {
   const onDropoffPlaceChanged = () => {
     if (dropoffAutocomplete) {
       const place = dropoffAutocomplete.getPlace();
-      if (place.geometry?.location) {
-        setFormData(prev => ({
-          ...prev,
-          dropoff_location: place.formatted_address || '',
-          dropoff_lat: place.geometry!.location!.lat(),
-          dropoff_lng: place.geometry!.location!.lng(),
-        }));
-      }
+      if (!place?.geometry?.location) return;
+
+      const location = place.geometry.location;
+      const lat = location.lat();
+      const lng = location.lng();
+      
+      setFormData(prev => ({
+        ...prev,
+        dropoff_location: place.formatted_address || '',
+        dropoff_lat: lat,
+        dropoff_lng: lng,
+      }));
     }
   };
 

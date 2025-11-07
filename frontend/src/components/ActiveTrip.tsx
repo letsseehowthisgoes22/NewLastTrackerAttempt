@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { TripMap } from './TripMap';
 
 export const ActiveTrip = () => {
   const { id } = useParams<{ id: string }>();
@@ -165,7 +166,7 @@ export const ActiveTrip = () => {
     );
   }
 
-  if (error) {
+  if (error && !trip) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
         <Alert variant="destructive">
@@ -181,19 +182,24 @@ export const ActiveTrip = () => {
   if (!trip) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
-        <p>Trip not found</p>
-        <Button onClick={() => navigate('/trips')} className="mt-4">
-          Back to Trips
-        </Button>
+        <p>Loading trip...</p>
       </div>
     );
   }
 
-  if (user?.role !== 'agent' && user?.role !== 'admin') {
+  const showInlineError = error && trip;
+
+  // Check if user has access to this trip
+  const hasAccess = user?.role === 'admin' || 
+                    user?.role === 'agent' || 
+                    (user?.role === 'parent' && trip.assigned_parent_id === user?.id) ||
+                    (user?.role === 'clinician' && trip.assigned_clinician_id === user?.id);
+
+  if (!hasAccess) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
         <Alert variant="destructive">
-          <AlertDescription>This page is only accessible to transport agents.</AlertDescription>
+          <AlertDescription>You do not have access to this trip.</AlertDescription>
         </Alert>
         <Button onClick={() => navigate('/trips')} className="mt-4">
           Back to Trips
@@ -223,6 +229,12 @@ export const ActiveTrip = () => {
           </div>
         </CardHeader>
         <CardContent className="space-y-6">
+          {showInlineError && (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
           <div>
             <h3 className="text-lg font-semibold mb-2">Client Information</h3>
             <p className="text-sm text-gray-900">{trip.client_name}</p>
@@ -232,6 +244,49 @@ export const ActiveTrip = () => {
             <h3 className="text-lg font-semibold mb-2">Destination</h3>
             <p className="text-sm text-gray-900">{trip.dropoff_location}</p>
           </div>
+
+          {/* Embedded Map - shows for all users with access */}
+          {(() => {
+            // Convert coordinates to numbers (handles both number and string from backend)
+            const convertToNumber = (value: number | string | null | undefined): number | null => {
+              if (value === null || value === undefined) return null;
+              if (typeof value === 'number') return isNaN(value) ? null : value;
+              if (typeof value === 'string') {
+                const parsed = parseFloat(value);
+                return isNaN(parsed) ? null : parsed;
+              }
+              return null;
+            };
+            
+            const pickupLat = convertToNumber(trip.pickup_lat);
+            const pickupLng = convertToNumber(trip.pickup_lng);
+            const dropoffLat = convertToNumber(trip.dropoff_lat);
+            const dropoffLng = convertToNumber(trip.dropoff_lng);
+            
+            const hasValidCoords = 
+              pickupLat !== null &&
+              pickupLng !== null &&
+              dropoffLat !== null &&
+              dropoffLng !== null;
+            
+            return hasValidCoords ? (
+              <div className="border-t pt-4">
+                <h3 className="text-lg font-semibold mb-3">Route Map</h3>
+                <div className="w-full" style={{ height: '400px', minHeight: '400px' }}>
+                  <TripMap
+                    pickupLat={pickupLat}
+                    pickupLng={pickupLng}
+                    dropoffLat={dropoffLat}
+                    dropoffLng={dropoffLng}
+                    pickupLocation={trip.pickup_location}
+                    dropoffLocation={trip.dropoff_location}
+                    tripId={trip.id}
+                    isLive={trip.status === 'in_progress'}
+                  />
+                </div>
+              </div>
+            ) : null;
+          })()}
 
           {isTracking && (
             <div className="border-t pt-4">
@@ -249,13 +304,13 @@ export const ActiveTrip = () => {
           )}
 
           <div className="border-t pt-4">
-            {trip.status === 'scheduled' && (
+            {trip.status === 'scheduled' && (user?.role === 'admin' || user?.role === 'agent') && (
               <Button onClick={handleStartTrip} className="w-full" size="lg">
                 Start Trip
               </Button>
             )}
             
-            {trip.status === 'in_progress' && (
+            {trip.status === 'in_progress' && user?.role === 'admin' && (
               <Button onClick={handleEndTrip} className="w-full" size="lg" variant="destructive">
                 End Trip
               </Button>

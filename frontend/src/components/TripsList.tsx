@@ -132,7 +132,7 @@ export const TripsList = () => {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {trips.map((trip) => (
+              {(Array.isArray(trips) ? trips : []).map((trip) => (
                 <Card key={trip.id} className="hover:shadow-lg transition-shadow cursor-pointer" onClick={() => navigate(`/trips/${trip.id}`)}>
                   <CardHeader>
                     <div className="flex justify-between items-start">

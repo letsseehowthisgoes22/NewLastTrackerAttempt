@@ -48,6 +48,9 @@ export interface Trip {
   agent_name: string | null;
   parent_name: string | null;
   assigned_clinician_name: string | null;
+  chat_admin_takeover?: boolean;
+  chat_taken_over_by?: number | null;
+  chat_takeover_at?: string | null;
 }
 
 export interface TripCreate {
@@ -69,6 +72,28 @@ export interface TripCreate {
   clinician_phone: string | null;
   clinician_email: string | null;
   additional_info: string | null;
+}
+
+export interface TripUpdate {
+  client_name: string | null;
+  pickup_location: string | null;
+  dropoff_location: string | null;
+  pickup_lat: number | null;
+  pickup_lng: number | null;
+  dropoff_lat: number | null;
+  dropoff_lng: number | null;
+  scheduled_start: string | null;
+  scheduled_end: string | null;
+  flight_number: string | null;
+  airline: string | null;
+  assigned_agent_id: number | null;
+  assigned_parent_id: number | null;
+  assigned_clinician_id: number | null;
+  clinician_name: string | null;
+  clinician_phone: string | null;
+  clinician_email: string | null;
+  additional_info: string | null;
+  status: string | null;
 }
 
 export interface Document {
