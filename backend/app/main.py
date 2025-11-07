@@ -14,12 +14,15 @@ from app.models import (
     LoginRequest, LoginResponse, UserResponse, 
     TripCreate, TripUpdate, TripResponse, 
     DocumentResponse, MessageResponse,
-    LocationUpdate, LocationUpdateResponse
+    LocationUpdate, LocationUpdateResponse,
+    MessageCreate, MessageResponseItem, MessagesResponse, UnreadCountResponse
 )
 from app.websocket import sio, broadcast_location_update
 from app.flight_tracking import fetch_flight_status
 from app.tracking_mode import determine_tracking_mode, update_trip_tracking_mode
+from app.rate_limiter import rate_limiter
 import socketio
+import html
 
 app = FastAPI()
 
@@ -532,51 +535,6 @@ async def get_trip_documents(trip_id: int, current_user: dict = Depends(get_curr
     
     return [DocumentResponse(**doc) for doc in documents]
 
-@app.get("/api/trips/{trip_id}/messages", response_model=List[MessageResponse])
-async def get_trip_messages(trip_id: int, current_user: dict = Depends(get_current_user)):
-    """Get all messages for a trip"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
-    trip = cursor.fetchone()
-    
-    if not trip:
-        cursor.close()
-        conn.close()
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Trip not found"
-        )
-    
-    user_id = current_user["id"]
-    user_role = current_user["role"]
-    
-    if user_role != "admin":
-        if (trip["assigned_agent_id"] != user_id and 
-            trip["assigned_parent_id"] != user_id and 
-            trip["assigned_clinician_id"] != user_id):
-            cursor.close()
-            conn.close()
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
-    
-    query = """
-        SELECT m.*, u.first_name || ' ' || u.last_name as sender_name
-        FROM messages m
-        LEFT JOIN users u ON m.sender_id = u.id
-        WHERE m.trip_id = %s
-        ORDER BY m.sent_at ASC
-    """
-    cursor.execute(query, (trip_id,))
-    messages = cursor.fetchall()
-    
-    cursor.close()
-    conn.close()
-    
-    return [MessageResponse(**msg) for msg in messages]
 
 @app.post("/api/trips/{trip_id}/documents", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_document(
@@ -1113,3 +1071,277 @@ async def get_tracking_mode(trip_id: int, current_user: dict = Depends(get_curre
         'mode': mode,
         'timestamp': datetime.now().isoformat()
     }
+
+@app.post("/api/trips/{trip_id}/messages", status_code=status.HTTP_201_CREATED)
+async def post_message(trip_id: int, message_data: MessageCreate, current_user: dict = Depends(get_current_user)):
+    """Send a new message to a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    if not rate_limiter.check_rate_limit(user_id, max_requests=20, window_minutes=1):
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded. Maximum 20 messages per minute."
+        )
+    
+    message_text = message_data.message.strip()
+    
+    if not message_text:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Message cannot be empty"
+        )
+    
+    if len(message_text) > 5000:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Message too long (max 5000 characters)"
+        )
+    
+    message_text = html.escape(message_text)
+    
+    cursor.execute("""
+        INSERT INTO messages (trip_id, sender_id, message_text, sent_at, read_by_recipient)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id, sent_at
+    """, (trip_id, user_id, message_text, datetime.now(), False))
+    
+    result = cursor.fetchone()
+    message_id = result['id']
+    sent_at = result['sent_at']
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    return {
+        'id': message_id,
+        'trip_id': trip_id,
+        'sender': {
+            'id': user_id,
+            'name': f"{current_user['first_name']} {current_user['last_name']}",
+            'role': user_role
+        },
+        'message': message_text,
+        'sent_at': sent_at.isoformat(),
+        'read': False,
+        'is_mine': True
+    }
+
+@app.get("/api/trips/{trip_id}/messages")
+async def get_messages(
+    trip_id: int, 
+    current_user: dict = Depends(get_current_user),
+    limit: int = 100,
+    since: Optional[str] = None
+):
+    """Retrieve all messages for a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    if since:
+        try:
+            from dateutil.parser import parse
+            parse(since)
+        except (ValueError, TypeError):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid 'since' timestamp format. Use ISO 8601 format."
+            )
+    
+    query = """
+        SELECT m.*, u.first_name, u.last_name, u.role
+        FROM messages m
+        JOIN users u ON m.sender_id = u.id
+        WHERE m.trip_id = %s
+    """
+    params = [trip_id]
+    
+    if since:
+        query += " AND m.sent_at > %s"
+        params.append(since)
+    
+    query += " ORDER BY m.sent_at ASC LIMIT %s"
+    params.append(limit)
+    
+    cursor.execute(query, params)
+    messages = cursor.fetchall()
+    
+    cursor.close()
+    conn.close()
+    
+    result = []
+    for msg in messages:
+        result.append({
+            'id': msg['id'],
+            'sender': {
+                'id': msg['sender_id'],
+                'name': f"{msg['first_name']} {msg['last_name']}",
+                'role': msg['role']
+            },
+            'message': msg['message_text'],
+            'sent_at': msg['sent_at'].isoformat(),
+            'read': msg['read_by_recipient'],
+            'is_mine': msg['sender_id'] == user_id
+        })
+    
+    return {
+        'messages': result,
+        'count': len(result)
+    }
+
+@app.put("/api/messages/{message_id}/read")
+async def mark_message_read(message_id: int, current_user: dict = Depends(get_current_user)):
+    """Mark a message as read"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM messages WHERE id = %s", (message_id,))
+    message = cursor.fetchone()
+    
+    if not message:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Message not found"
+        )
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (message['trip_id'],))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    cursor.execute(
+        "UPDATE messages SET read_by_recipient = TRUE WHERE id = %s",
+        (message_id,)
+    )
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    return {'success': True}
+
+@app.get("/api/trips/{trip_id}/messages/unread")
+async def get_unread_count(trip_id: int, current_user: dict = Depends(get_current_user)):
+    """Get count of unread messages for a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    cursor.execute("""
+        SELECT COUNT(*) as count
+        FROM messages
+        WHERE trip_id = %s AND read_by_recipient = FALSE AND sender_id != %s
+    """, (trip_id, user_id))
+    
+    result = cursor.fetchone()
+    unread_count = result['count']
+    
+    cursor.close()
+    conn.close()
+    
+    return {'unread_count': unread_count}

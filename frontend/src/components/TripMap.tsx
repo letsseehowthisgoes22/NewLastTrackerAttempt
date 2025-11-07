@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { getLatestLocation, getLocationHistory, getFlightInfo, FlightInfo, getTrackingMode, TrackingMode } from '../api/trips';
+import { getLatestLocation, getLocationHistory, getFlightInfo, FlightInfo, getTrackingMode } from '../api/trips';
 import { useAuth } from '../context/AuthContext';
 import { io, Socket } from 'socket.io-client';
 

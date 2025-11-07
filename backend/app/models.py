@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 
@@ -133,3 +133,26 @@ class ClientNoteResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     creator_name: Optional[str] = None
+
+class MessageCreate(BaseModel):
+    message: str
+
+class MessageSender(BaseModel):
+    id: int
+    name: str
+    role: str
+
+class MessageResponseItem(BaseModel):
+    id: int
+    sender: MessageSender
+    message: str
+    sent_at: str
+    read: bool
+    is_mine: bool
+
+class MessagesResponse(BaseModel):
+    messages: List[MessageResponseItem]
+    count: int
+
+class UnreadCountResponse(BaseModel):
+    unread_count: int
