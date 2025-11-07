@@ -88,6 +88,9 @@ class TripResponse(BaseModel):
     agent_name: Optional[str] = None
     parent_name: Optional[str] = None
     assigned_clinician_name: Optional[str] = None
+    chat_admin_takeover: Optional[bool] = False
+    chat_taken_over_by: Optional[int] = None
+    chat_takeover_at: Optional[datetime] = None
 
 class LocationUpdate(BaseModel):
     latitude: float

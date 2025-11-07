@@ -213,6 +213,15 @@ async def send_message(sid, data):
             await sio.emit('error', {'message': 'Access denied'}, to=sid)
             return
         
+        if trip.get('chat_admin_takeover'):
+            if user_role not in ['admin', 'agent']:
+                cursor.close()
+                conn.close()
+                await sio.emit('error', {
+                    'message': 'Chat is currently being managed by an administrator'
+                }, to=sid)
+                return
+        
         client_ip = f"ws_{user_id}"
         if not rate_limiter.check_rate_limit(client_ip):
             cursor.close()

@@ -1345,3 +1345,70 @@ async def get_unread_count(trip_id: int, current_user: dict = Depends(get_curren
     conn.close()
     
     return {'unread_count': unread_count}
+
+@app.post("/api/trips/{trip_id}/chat/takeover")
+async def takeover_chat(
+    trip_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Admin takes over chat control"""
+    if current_user['role'] != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        UPDATE trips
+        SET chat_admin_takeover = TRUE,
+            chat_taken_over_by = %s,
+            chat_takeover_at = NOW()
+        WHERE id = %s
+    """, (current_user['id'], trip_id))
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    admin_name = f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip()
+    if not admin_name:
+        admin_name = current_user['email']
+    
+    await sio.emit('chat_takeover', {
+        'trip_id': trip_id,
+        'admin_name': admin_name,
+        'taken_over': True
+    }, room=f'trip_{trip_id}')
+    
+    return {"success": True, "message": "Chat taken over successfully"}
+
+@app.post("/api/trips/{trip_id}/chat/release")
+async def release_chat(
+    trip_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Admin releases chat control"""
+    if current_user['role'] != 'admin':
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        UPDATE trips
+        SET chat_admin_takeover = FALSE,
+            chat_taken_over_by = NULL,
+            chat_takeover_at = NULL
+        WHERE id = %s
+    """, (trip_id,))
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    await sio.emit('chat_takeover', {
+        'trip_id': trip_id,
+        'taken_over': False
+    }, room=f'trip_{trip_id}')
+    
+    return {"success": True, "message": "Chat released successfully"}
