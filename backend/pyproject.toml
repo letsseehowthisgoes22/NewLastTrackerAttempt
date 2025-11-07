@@ -13,6 +13,7 @@ passlib = {extras = ["bcrypt"], version = "^1.7.4"}
 python-multipart = "^0.0.20"
 python-dotenv = "^1.2.1"
 psycopg = {extras = ["binary"], version = "^3.2.12"}
+python-socketio = "^5.11.0"
 
 
 [build-system]
