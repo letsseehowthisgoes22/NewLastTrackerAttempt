@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { getMessages, Message } from '../api/trips';
+import { getMessages, Message, getTrip, takeoverChat, releaseChat } from '../api/trips';
 import { useAuth } from '../context/AuthContext';
 
 interface TripChatProps {
@@ -8,16 +8,18 @@ interface TripChatProps {
 }
 
 const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [typingUsers, setTypingUsers] = useState<Array<{user_id: number, name: string}>>([]);
   const [connected, setConnected] = useState(false);
+  const [chatTakenOver, setChatTakenOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const currentUserRole = user?.role || '';
 
   useEffect(() => {
     if (!token || !tripId) return;
@@ -85,6 +87,11 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
       setError(data.message);
     });
 
+    socket.on('chat_takeover', (data: { trip_id: number, taken_over: boolean, admin_name?: string }) => {
+      console.log('Chat takeover event:', data);
+      setChatTakenOver(data.taken_over);
+    });
+
     fetchInitialMessages();
 
     return () => {
@@ -109,6 +116,9 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
           token: token
         });
       }
+
+      const trip = await getTrip(token, tripId);
+      setChatTakenOver(trip.chat_admin_takeover || false);
     } catch (error: any) {
       console.error('Failed to fetch messages:', error);
       setError('Failed to load messages');
@@ -209,6 +219,28 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
     }
   };
 
+  const handleTakeover = async () => {
+    if (!token) return;
+    
+    try {
+      await takeoverChat(token, tripId);
+    } catch (error: any) {
+      console.error('Failed to takeover chat:', error);
+      setError('Failed to takeover chat. Please try again.');
+    }
+  };
+
+  const handleRelease = async () => {
+    if (!token) return;
+    
+    try {
+      await releaseChat(token, tripId);
+    } catch (error: any) {
+      console.error('Failed to release chat:', error);
+      setError('Failed to release chat. Please try again.');
+    }
+  };
+
   return (
     <div className="trip-chat">
       <div className="chat-header">
@@ -217,6 +249,27 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
           {connected ? '🟢 Connected' : '🔴 Disconnected'}
         </span>
       </div>
+
+      {currentUserRole === 'admin' && (
+        <div className="admin-chat-controls">
+          {!chatTakenOver ? (
+            <button onClick={handleTakeover} className="btn-takeover">
+              Take Over Chat
+            </button>
+          ) : (
+            <button onClick={handleRelease} className="btn-release">
+              Release Chat
+            </button>
+          )}
+        </div>
+      )}
+
+      {chatTakenOver && !['admin', 'agent'].includes(currentUserRole) && (
+        <div className="chat-takeover-notice">
+          ⚠️ An administrator is currently managing this conversation.
+          Your messages are temporarily disabled.
+        </div>
+      )}
 
       <div className="chat-messages">
         {messages.length === 0 && (
@@ -272,12 +325,16 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
         <textarea
           value={newMessage}
           onChange={handleTyping}
-          placeholder="Type a message..."
+          placeholder={
+            chatTakenOver && !['admin', 'agent'].includes(currentUserRole)
+              ? "Chat is under admin control..."
+              : "Type a message..."
+          }
           rows={2}
-          disabled={loading || !connected}
+          disabled={loading || !connected || (chatTakenOver && !['admin', 'agent'].includes(currentUserRole))}
           onKeyPress={handleKeyPress}
         />
-        <button type="submit" disabled={loading || !newMessage.trim() || !connected}>
+        <button type="submit" disabled={loading || !newMessage.trim() || !connected || (chatTakenOver && !['admin', 'agent'].includes(currentUserRole))}>
           {loading ? 'Sending...' : 'Send'}
         </button>
       </form>

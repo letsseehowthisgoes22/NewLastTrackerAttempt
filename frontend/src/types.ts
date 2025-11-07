@@ -48,6 +48,9 @@ export interface Trip {
   agent_name: string | null;
   parent_name: string | null;
   assigned_clinician_name: string | null;
+  chat_admin_takeover?: boolean;
+  chat_taken_over_by?: number | null;
+  chat_takeover_at?: string | null;
 }
 
 export interface TripCreate {

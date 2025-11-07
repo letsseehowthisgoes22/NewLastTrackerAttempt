@@ -66,7 +66,10 @@ def init_db():
         ADD COLUMN IF NOT EXISTS clinician_phone VARCHAR(50),
         ADD COLUMN IF NOT EXISTS clinician_email VARCHAR(255),
         ADD COLUMN IF NOT EXISTS additional_info TEXT,
-        ADD COLUMN IF NOT EXISTS tracking_mode VARCHAR(50) DEFAULT 'gps';
+        ADD COLUMN IF NOT EXISTS tracking_mode VARCHAR(50) DEFAULT 'gps',
+        ADD COLUMN IF NOT EXISTS chat_admin_takeover BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS chat_taken_over_by INTEGER REFERENCES users(id),
+        ADD COLUMN IF NOT EXISTS chat_takeover_at TIMESTAMP;
     """)
     
     cursor.execute("""

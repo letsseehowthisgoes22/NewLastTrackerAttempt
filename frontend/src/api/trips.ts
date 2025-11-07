@@ -223,3 +223,29 @@ export const getUnreadCount = async (token: string, tripId: number): Promise<Unr
   });
   return response.data;
 };
+
+export const takeoverChat = async (token: string, tripId: number): Promise<{ success: boolean; message: string }> => {
+  const response = await api.post<{ success: boolean; message: string }>(
+    `/api/trips/${tripId}/chat/takeover`,
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
+export const releaseChat = async (token: string, tripId: number): Promise<{ success: boolean; message: string }> => {
+  const response = await api.post<{ success: boolean; message: string }>(
+    `/api/trips/${tripId}/chat/release`,
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};

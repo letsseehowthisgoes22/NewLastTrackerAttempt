@@ -213,6 +213,53 @@
   background: #0056b3;
 }
 
+.chat-takeover-notice {
+  background-color: #fff3cd;
+  color: #856404;
+  padding: 12px;
+  border-radius: 4px;
+  margin: 12px 15px;
+  font-size: 14px;
+  border-left: 4px solid #ffc107;
+}
+
+.admin-chat-controls {
+  padding: 12px 15px;
+  background: #f0f8ff;
+  border-bottom: 1px solid #ddd;
+  display: flex;
+  gap: 10px;
+}
+
+.btn-takeover,
+.btn-release {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.btn-takeover {
+  background: #ff9800;
+  color: white;
+}
+
+.btn-takeover:hover {
+  background: #f57c00;
+}
+
+.btn-release {
+  background: #4CAF50;
+  color: white;
+}
+
+.btn-release:hover {
+  background: #45a049;
+}
+
 /* Mobile responsive */
 @media (max-width: 768px) {
   .trip-chat {
