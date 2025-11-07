@@ -26,8 +26,6 @@ import html
 
 app = FastAPI()
 
-socket_app = socketio.ASGIApp(sio, app)
-
 # Disable CORS. Do not remove this for full-stack development.
 app.add_middleware(
     CORSMiddleware,
@@ -36,6 +34,8 @@ app.add_middleware(
     allow_methods=["*"],  # Allows all methods
     allow_headers=["*"],  # Allows all headers
 )
+
+socket_app = socketio.ASGIApp(sio, other_asgi_app=app, socketio_path='socket.io')
 
 UPLOAD_DIR = Path("./uploads")
 ALLOWED_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.docx', '.doc'}

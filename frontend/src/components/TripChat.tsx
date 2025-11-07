@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { postMessage, getMessages, Message } from '../api/trips';
+import { io, Socket } from 'socket.io-client';
+import { getMessages, Message } from '../api/trips';
 import { useAuth } from '../context/AuthContext';
 
 interface TripChatProps {
@@ -12,21 +13,102 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
   const [newMessage, setNewMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [typingUsers, setTypingUsers] = useState<Array<{user_id: number, name: string}>>([]);
+  const [connected, setConnected] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const socketRef = useRef<Socket | null>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (token && tripId) {
-      fetchMessages();
-    }
+    if (!token || !tripId) return;
+
+    const socket = io('http://localhost:8000', {
+      transports: ['websocket', 'polling']
+    });
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      console.log('WebSocket connected');
+      setConnected(true);
+      
+      socket.emit('subscribe_trip', {
+        trip_id: tripId,
+        token: token
+      });
+    });
+
+    socket.on('disconnect', () => {
+      console.log('WebSocket disconnected');
+      setConnected(false);
+    });
+
+    socket.on('subscribed', (data) => {
+      console.log('Subscribed to trip:', data.trip_id);
+    });
+
+    socket.on('new_message', (message: any) => {
+      console.log('New message received:', message);
+      const formattedMessage: Message = {
+        id: message.id,
+        sender: message.sender,
+        message: message.message,
+        sent_at: message.sent_at,
+        read: message.read,
+        is_mine: message.sender.id === parseInt(localStorage.getItem('user_id') || '0')
+      };
+      setMessages(prev => [...prev, formattedMessage]);
+      scrollToBottom();
+      
+      if (!formattedMessage.is_mine) {
+        socket.emit('mark_messages_read', {
+          trip_id: tripId,
+          token: token
+        });
+      }
+    });
+
+    socket.on('typing_status', (data: { trip_id: number, typing_users: Array<{user_id: number, name: string}> }) => {
+      const currentUserId = parseInt(localStorage.getItem('user_id') || '0');
+      const filteredTypingUsers = data.typing_users.filter(u => u.user_id !== currentUserId);
+      setTypingUsers(filteredTypingUsers);
+    });
+
+    socket.on('messages_read', () => {
+      setMessages(prev => prev.map(msg => ({
+        ...msg,
+        read: true
+      })));
+    });
+
+    socket.on('error', (data: { message: string }) => {
+      console.error('WebSocket error:', data.message);
+      setError(data.message);
+    });
+
+    fetchInitialMessages();
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.emit('unsubscribe_trip', { trip_id: tripId });
+        socketRef.current.disconnect();
+      }
+    };
   }, [tripId, token]);
 
-  const fetchMessages = async () => {
+  const fetchInitialMessages = async () => {
     if (!token) return;
     
     try {
       const data = await getMessages(token, tripId);
       setMessages(data.messages);
       scrollToBottom();
+      
+      if (socketRef.current && data.messages.length > 0) {
+        socketRef.current.emit('mark_messages_read', {
+          trip_id: tripId,
+          token: token
+        });
+      }
     } catch (error: any) {
       console.error('Failed to fetch messages:', error);
       setError('Failed to load messages');
@@ -36,26 +118,56 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
   const sendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!newMessage.trim() || !token) return;
+    if (!newMessage.trim() || !token || !socketRef.current) return;
 
     setLoading(true);
     setError(null);
     
     try {
-      const sentMessage = await postMessage(token, tripId, newMessage);
-      setMessages(prev => [...prev, sentMessage]);
+      socketRef.current.emit('send_message', {
+        trip_id: tripId,
+        message: newMessage,
+        token: token
+      });
+      
       setNewMessage('');
-      scrollToBottom();
+      
+      if (socketRef.current) {
+        socketRef.current.emit('user_stopped_typing', {
+          trip_id: tripId,
+          token: token
+        });
+      }
     } catch (error: any) {
       console.error('Failed to send message:', error);
-      if (error.response?.status === 429) {
-        setError('Rate limit exceeded. Please wait a moment before sending more messages.');
-      } else {
-        setError('Failed to send message. Please try again.');
-      }
+      setError('Failed to send message. Please try again.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleTyping = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setNewMessage(e.target.value);
+    
+    if (!socketRef.current || !token) return;
+    
+    socketRef.current.emit('user_typing', {
+      trip_id: tripId,
+      token: token
+    });
+    
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    
+    typingTimeoutRef.current = setTimeout(() => {
+      if (socketRef.current) {
+        socketRef.current.emit('user_stopped_typing', {
+          trip_id: tripId,
+          token: token
+        });
+      }
+    }, 3000);
   };
 
   const scrollToBottom = () => {
@@ -101,6 +213,9 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
     <div className="trip-chat">
       <div className="chat-header">
         <h3>💬 Trip Messages</h3>
+        <span className={`chat-status ${connected ? 'connected' : 'disconnected'}`}>
+          {connected ? '🟢 Connected' : '🔴 Disconnected'}
+        </span>
       </div>
 
       <div className="chat-messages">
@@ -128,9 +243,21 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
             </div>
             <div className="message-bubble">
               {msg.message}
+              {msg.read && msg.is_mine && (
+                <span className="read-indicator">✓✓</span>
+              )}
             </div>
           </div>
         ))}
+
+        {typingUsers.length > 0 && (
+          <div className="typing-indicator">
+            {typingUsers.map(u => u.name).join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing
+            <span className="typing-dots">
+              <span>.</span><span>.</span><span>.</span>
+            </span>
+          </div>
+        )}
 
         <div ref={messagesEndRef} />
       </div>
@@ -144,13 +271,13 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
       <form className="chat-input" onSubmit={sendMessage}>
         <textarea
           value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
+          onChange={handleTyping}
           placeholder="Type a message..."
           rows={2}
-          disabled={loading}
+          disabled={loading || !connected}
           onKeyPress={handleKeyPress}
         />
-        <button type="submit" disabled={loading || !newMessage.trim()}>
+        <button type="submit" disabled={loading || !newMessage.trim() || !connected}>
           {loading ? 'Sending...' : 'Send'}
         </button>
       </form>
