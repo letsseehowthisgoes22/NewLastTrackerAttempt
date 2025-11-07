@@ -9,6 +9,8 @@ import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DocumentsSection } from './DocumentsSection';
 import { TripMap } from './TripMap';
+import TripChat from './TripChat';
+import './TripChat.css';
 
 export const TripDetail = () => {
   const { id } = useParams<{ id: string }>();
@@ -273,6 +275,10 @@ export const TripDetail = () => {
 
       <div className="mt-6">
         <DocumentsSection tripId={trip.id} />
+      </div>
+
+      <div className="mt-6">
+        <TripChat tripId={trip.id} />
       </div>
     </div>
   );
