@@ -535,51 +535,6 @@ async def get_trip_documents(trip_id: int, current_user: dict = Depends(get_curr
     
     return [DocumentResponse(**doc) for doc in documents]
 
-@app.get("/api/trips/{trip_id}/messages", response_model=List[MessageResponse])
-async def get_trip_messages(trip_id: int, current_user: dict = Depends(get_current_user)):
-    """Get all messages for a trip"""
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
-    trip = cursor.fetchone()
-    
-    if not trip:
-        cursor.close()
-        conn.close()
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Trip not found"
-        )
-    
-    user_id = current_user["id"]
-    user_role = current_user["role"]
-    
-    if user_role != "admin":
-        if (trip["assigned_agent_id"] != user_id and 
-            trip["assigned_parent_id"] != user_id and 
-            trip["assigned_clinician_id"] != user_id):
-            cursor.close()
-            conn.close()
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
-    
-    query = """
-        SELECT m.*, u.first_name || ' ' || u.last_name as sender_name
-        FROM messages m
-        LEFT JOIN users u ON m.sender_id = u.id
-        WHERE m.trip_id = %s
-        ORDER BY m.sent_at ASC
-    """
-    cursor.execute(query, (trip_id,))
-    messages = cursor.fetchall()
-    
-    cursor.close()
-    conn.close()
-    
-    return [MessageResponse(**msg) for msg in messages]
 
 @app.post("/api/trips/{trip_id}/documents", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_document(
@@ -1200,7 +1155,8 @@ async def post_message(trip_id: int, message_data: MessageCreate, current_user: 
         },
         'message': message_text,
         'sent_at': sent_at.isoformat(),
-        'read': False
+        'read': False,
+        'is_mine': True
     }
 
 @app.get("/api/trips/{trip_id}/messages")
@@ -1237,6 +1193,18 @@ async def get_messages(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied"
+            )
+    
+    if since:
+        try:
+            from dateutil.parser import parse
+            parse(since)
+        except (ValueError, TypeError):
+            cursor.close()
+            conn.close()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid 'since' timestamp format. Use ISO 8601 format."
             )
     
     query = """
