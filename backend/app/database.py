@@ -65,7 +65,11 @@ def init_db():
         ADD COLUMN IF NOT EXISTS clinician_name VARCHAR(255),
         ADD COLUMN IF NOT EXISTS clinician_phone VARCHAR(50),
         ADD COLUMN IF NOT EXISTS clinician_email VARCHAR(255),
-        ADD COLUMN IF NOT EXISTS additional_info TEXT;
+        ADD COLUMN IF NOT EXISTS additional_info TEXT,
+        ADD COLUMN IF NOT EXISTS tracking_mode VARCHAR(50) DEFAULT 'gps',
+        ADD COLUMN IF NOT EXISTS chat_admin_takeover BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS chat_taken_over_by INTEGER REFERENCES users(id),
+        ADD COLUMN IF NOT EXISTS chat_takeover_at TIMESTAMP;
     """)
     
     cursor.execute("""
@@ -117,6 +121,18 @@ def init_db():
     """)
     
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trip_status_history (
+            id SERIAL PRIMARY KEY,
+            trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
+            changed_by_id INTEGER REFERENCES users(id),
+            old_status VARCHAR(50),
+            new_status VARCHAR(50),
+            changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT
+        );
+    """)
+    
+    cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_trips_agent ON trips(assigned_agent_id);
     """)
     cursor.execute("""
@@ -136,6 +152,9 @@ def init_db():
     """)
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_messages_trip ON messages(trip_id, sent_at);
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_status_history_trip ON trip_status_history(trip_id, changed_at DESC);
     """)
     
     cursor.execute("""

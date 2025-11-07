@@ -104,3 +104,188 @@ export const getUsersByRole = async (token: string, role: string): Promise<User[
   });
   return response.data;
 };
+
+export interface FlightInfo {
+  flight_number: string;
+  airline: string;
+  status: string;
+  departure_airport: string;
+  departure_gate?: string;
+  departure_time?: string;
+  arrival_airport: string;
+  arrival_gate?: string;
+  arrival_time?: string;
+  current_position?: {
+    latitude: number;
+    longitude: number;
+    altitude?: number;
+    speed?: number;
+  };
+}
+
+export const getFlightInfo = async (token: string, tripId: number): Promise<FlightInfo> => {
+  const response = await api.get<FlightInfo>(`/api/trips/${tripId}/flight`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  return response.data;
+};
+
+export interface TrackingMode {
+  mode: 'gps' | 'flight' | 'unknown';
+  timestamp: string;
+}
+
+export const getTrackingMode = async (token: string, tripId: number): Promise<TrackingMode> => {
+  const response = await api.get<TrackingMode>(`/api/trips/${tripId}/tracking-mode`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  return response.data;
+};
+
+export interface MessageSender {
+  id: number;
+  name: string;
+  role: string;
+}
+
+export interface Message {
+  id: number;
+  sender: MessageSender;
+  message: string;
+  sent_at: string;
+  read: boolean;
+  is_mine: boolean;
+}
+
+export interface MessagesResponse {
+  messages: Message[];
+  count: number;
+}
+
+export interface UnreadCountResponse {
+  unread_count: number;
+}
+
+export const postMessage = async (token: string, tripId: number, message: string): Promise<Message> => {
+  const response = await api.post<Message>(`/api/trips/${tripId}/messages`, 
+    { message },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
+export const getMessages = async (
+  token: string, 
+  tripId: number, 
+  limit?: number, 
+  since?: string
+): Promise<MessagesResponse> => {
+  const params = new URLSearchParams();
+  if (limit) params.append('limit', limit.toString());
+  if (since) params.append('since', since);
+  
+  const response = await api.get<MessagesResponse>(
+    `/api/trips/${tripId}/messages?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
+export const markMessageRead = async (token: string, messageId: number): Promise<{ success: boolean }> => {
+  const response = await api.put<{ success: boolean }>(`/api/messages/${messageId}/read`, 
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
+export const getUnreadCount = async (token: string, tripId: number): Promise<UnreadCountResponse> => {
+  const response = await api.get<UnreadCountResponse>(`/api/trips/${tripId}/messages/unread`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  return response.data;
+};
+
+export const takeoverChat = async (token: string, tripId: number): Promise<{ success: boolean; message: string }> => {
+  const response = await api.post<{ success: boolean; message: string }>(
+    `/api/trips/${tripId}/chat/takeover`,
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
+export const releaseChat = async (token: string, tripId: number): Promise<{ success: boolean; message: string }> => {
+  const response = await api.post<{ success: boolean; message: string }>(
+    `/api/trips/${tripId}/chat/release`,
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
+export interface StatusHistoryRecord {
+  id: number;
+  old_status: string;
+  new_status: string;
+  changed_by: string;
+  changed_at: string;
+  notes: string;
+}
+
+export interface StatusHistoryResponse {
+  history: StatusHistoryRecord[];
+}
+
+export const updateTripStatus = async (
+  token: string, 
+  tripId: number, 
+  status: string, 
+  notes: string = ""
+): Promise<{ success: boolean; trip_id: number; status: string }> => {
+  const response = await api.put<{ success: boolean; trip_id: number; status: string }>(
+    `/api/trips/${tripId}/status`,
+    { status, notes },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
+export const getStatusHistory = async (token: string, tripId: number): Promise<StatusHistoryResponse> => {
+  const response = await api.get<StatusHistoryResponse>(`/api/trips/${tripId}/status-history`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  return response.data;
+};
