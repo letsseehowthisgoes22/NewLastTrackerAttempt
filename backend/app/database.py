@@ -133,6 +133,36 @@ def init_db():
     """)
     
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notification_preferences (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id) UNIQUE,
+            email_trip_started BOOLEAN DEFAULT TRUE,
+            email_trip_completed BOOLEAN DEFAULT TRUE,
+            email_new_message BOOLEAN DEFAULT TRUE,
+            email_status_changed BOOLEAN DEFAULT TRUE,
+            sms_trip_started BOOLEAN DEFAULT FALSE,
+            sms_trip_completed BOOLEAN DEFAULT TRUE,
+            sms_new_message BOOLEAN DEFAULT FALSE,
+            sms_status_changed BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notification_log (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER REFERENCES users(id),
+            trip_id INTEGER REFERENCES trips(id),
+            notification_type VARCHAR(50),
+            event_type VARCHAR(50),
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            success BOOLEAN,
+            error_message TEXT
+        );
+    """)
+    
+    cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_trips_agent ON trips(assigned_agent_id);
     """)
     cursor.execute("""
