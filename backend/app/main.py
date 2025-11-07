@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse
 from typing import List, Optional
+from datetime import datetime
 import psycopg
 import os
 import shutil
@@ -17,6 +18,7 @@ from app.models import (
 )
 from app.websocket import sio, broadcast_location_update
 from app.flight_tracking import fetch_flight_status
+from app.tracking_mode import determine_tracking_mode, update_trip_tracking_mode
 import socketio
 
 app = FastAPI()
@@ -1067,3 +1069,47 @@ async def get_flight_status(trip_id: int, current_user: dict = Depends(get_curre
         }
     
     return flight_info
+
+@app.get("/api/trips/{trip_id}/tracking-mode")
+async def get_tracking_mode(trip_id: int, current_user: dict = Depends(get_current_user)):
+    """Get current tracking mode for a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    cursor.close()
+    conn.close()
+    
+    if not trip:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    user_id = current_user["id"]
+    user_role = current_user["role"]
+    
+    if user_role != "admin":
+        if (trip["assigned_agent_id"] != user_id and 
+            trip["assigned_parent_id"] != user_id and 
+            trip["assigned_clinician_id"] != user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied"
+            )
+    
+    mode = determine_tracking_mode(trip_id)
+    
+    new_mode = update_trip_tracking_mode(trip_id)
+    if new_mode:
+        await sio.emit('tracking_mode_changed', {
+            'mode': new_mode,
+            'timestamp': datetime.now().isoformat()
+        }, room=f'trip_{trip_id}')
+    
+    return {
+        'mode': mode,
+        'timestamp': datetime.now().isoformat()
+    }
