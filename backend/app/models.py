@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from decimal import Decimal
 
@@ -88,6 +88,9 @@ class TripResponse(BaseModel):
     agent_name: Optional[str] = None
     parent_name: Optional[str] = None
     assigned_clinician_name: Optional[str] = None
+    chat_admin_takeover: Optional[bool] = False
+    chat_taken_over_by: Optional[int] = None
+    chat_takeover_at: Optional[datetime] = None
 
 class LocationUpdate(BaseModel):
     latitude: float
@@ -133,3 +136,26 @@ class ClientNoteResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     creator_name: Optional[str] = None
+
+class MessageCreate(BaseModel):
+    message: str
+
+class MessageSender(BaseModel):
+    id: int
+    name: str
+    role: str
+
+class MessageResponseItem(BaseModel):
+    id: int
+    sender: MessageSender
+    message: str
+    sent_at: str
+    read: bool
+    is_mine: bool
+
+class MessagesResponse(BaseModel):
+    messages: List[MessageResponseItem]
+    count: int
+
+class UnreadCountResponse(BaseModel):
+    unread_count: int
