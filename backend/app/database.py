@@ -121,6 +121,18 @@ def init_db():
     """)
     
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trip_status_history (
+            id SERIAL PRIMARY KEY,
+            trip_id INTEGER REFERENCES trips(id) ON DELETE CASCADE,
+            changed_by_id INTEGER REFERENCES users(id),
+            old_status VARCHAR(50),
+            new_status VARCHAR(50),
+            changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            notes TEXT
+        );
+    """)
+    
+    cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_trips_agent ON trips(assigned_agent_id);
     """)
     cursor.execute("""
@@ -140,6 +152,9 @@ def init_db():
     """)
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_messages_trip ON messages(trip_id, sent_at);
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_status_history_trip ON trip_status_history(trip_id, changed_at DESC);
     """)
     
     cursor.execute("""
