@@ -131,3 +131,17 @@ export const getFlightInfo = async (token: string, tripId: number): Promise<Flig
   });
   return response.data;
 };
+
+export interface TrackingMode {
+  mode: 'gps' | 'flight' | 'unknown';
+  timestamp: string;
+}
+
+export const getTrackingMode = async (token: string, tripId: number): Promise<TrackingMode> => {
+  const response = await api.get<TrackingMode>(`/api/trips/${tripId}/tracking-mode`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  return response.data;
+};

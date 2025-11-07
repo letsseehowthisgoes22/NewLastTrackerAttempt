@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { getLatestLocation, getLocationHistory, getFlightInfo, FlightInfo } from '../api/trips';
+import { getLatestLocation, getLocationHistory, getFlightInfo, FlightInfo, getTrackingMode, TrackingMode } from '../api/trips';
 import { useAuth } from '../context/AuthContext';
 import { io, Socket } from 'socket.io-client';
 
@@ -38,6 +38,15 @@ const dropoffIcon = new L.Icon({
 
 const vehicleIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
+  shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+  iconSize: [25, 41],
+  iconAnchor: [12, 41],
+  popupAnchor: [1, -34],
+  shadowSize: [41, 41]
+});
+
+const airplaneIcon = new L.Icon({
+  iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
   iconSize: [25, 41],
   iconAnchor: [12, 41],
@@ -227,6 +236,7 @@ export const TripMap: React.FC<TripMapProps> = ({
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
   const [flightInfo, setFlightInfo] = useState<FlightInfo | null>(null);
   const [flightInfoError, setFlightInfoError] = useState<string | null>(null);
+  const [trackingMode, setTrackingMode] = useState<'gps' | 'flight' | 'unknown'>('gps');
 
   const centerLat = (pickupLat + dropoffLat) / 2;
   const centerLng = (pickupLng + dropoffLng) / 2;
@@ -262,8 +272,18 @@ export const TripMap: React.FC<TripMapProps> = ({
       }
     };
 
+    const fetchTrackingMode = async () => {
+      try {
+        const data = await getTrackingMode(token, tripId);
+        setTrackingMode(data.mode);
+      } catch (error: any) {
+        console.error('Failed to fetch tracking mode:', error);
+      }
+    };
+
     fetchHistory();
     fetchFlight();
+    fetchTrackingMode();
   }, [isLive, tripId, token]);
 
   const handleLocationUpdate = (location: { lat: number; lng: number } | null, timestamp: string | null) => {
@@ -308,6 +328,23 @@ export const TripMap: React.FC<TripMapProps> = ({
     }
   };
 
+  const getTrackingModeDisplay = () => {
+    switch (trackingMode) {
+      case 'gps':
+        return { icon: '📍', text: 'GPS Tracking', color: 'text-green-600', description: 'Real-time location from transport agent' };
+      case 'flight':
+        return { icon: '✈️', text: 'Flight Tracking', color: 'text-blue-600', description: 'Tracking via flight number' };
+      case 'unknown':
+        return { icon: '⚠️', text: 'Location Unavailable', color: 'text-orange-600', description: 'Waiting for location update...' };
+      default:
+        return { icon: '⚪', text: 'Unknown', color: 'text-gray-600', description: '' };
+    }
+  };
+
+  const getCurrentIcon = () => {
+    return trackingMode === 'flight' ? airplaneIcon : vehicleIcon;
+  };
+
   return (
     <div className="w-full rounded-lg overflow-hidden border shadow-md">
       <div className="h-[400px]">
@@ -344,12 +381,12 @@ export const TripMap: React.FC<TripMapProps> = ({
             </Popup>
           </Marker>
 
-          {/* Agent Location Marker (Blue) - only show if live tracking and location exists */}
+          {/* Agent Location Marker - only show if live tracking and location exists */}
           {isLive && currentLocation && (
-            <Marker position={[currentLocation.lat, currentLocation.lng]} icon={vehicleIcon}>
+            <Marker position={[currentLocation.lat, currentLocation.lng]} icon={getCurrentIcon()}>
               <Popup>
                 <div className="text-sm">
-                  <strong>Transport Agent</strong>
+                  <strong>{trackingMode === 'flight' ? 'Aircraft' : 'Transport Agent'}</strong>
                   <br />
                   Current Location
                   {lastUpdate && (
@@ -395,9 +432,22 @@ export const TripMap: React.FC<TripMapProps> = ({
         </MapContainer>
       </div>
 
-      {/* Live tracking indicator */}
+      {/* Tracking mode indicator */}
       {isLive && (
         <div className="bg-gray-50 px-4 py-2 border-t">
+          <div className="flex items-center justify-between text-sm mb-2">
+            <div className="flex items-center gap-2">
+              <span>{getTrackingModeDisplay().icon}</span>
+              <div>
+                <span className={`font-medium ${getTrackingModeDisplay().color}`}>
+                  {getTrackingModeDisplay().text}
+                </span>
+                <div className="text-xs text-gray-500">
+                  {getTrackingModeDisplay().description}
+                </div>
+              </div>
+            </div>
+          </div>
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-2">
               <span>{getConnectionStatusDisplay().icon}</span>
