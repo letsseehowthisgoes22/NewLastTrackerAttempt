@@ -1552,3 +1552,136 @@ async def get_status_history(
         })
     
     return {'history': formatted_history}
+
+@app.get("/api/users/me/notification-preferences")
+async def get_notification_preferences(
+    current_user: dict = Depends(get_current_user)
+):
+    """Get notification preferences for current user"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM notification_preferences
+        WHERE user_id = %s
+    """, (current_user['id'],))
+    
+    prefs = cursor.fetchone()
+    
+    if not prefs:
+        cursor.execute("""
+            INSERT INTO notification_preferences (user_id)
+            VALUES (%s)
+            RETURNING *
+        """, (current_user['id'],))
+        prefs = cursor.fetchone()
+        conn.commit()
+    
+    cursor.close()
+    conn.close()
+    
+    return {
+        'user_id': prefs['user_id'],
+        'email_trip_started': prefs['email_trip_started'],
+        'email_trip_completed': prefs['email_trip_completed'],
+        'email_new_message': prefs['email_new_message'],
+        'email_status_changed': prefs['email_status_changed'],
+        'sms_trip_started': prefs['sms_trip_started'],
+        'sms_trip_completed': prefs['sms_trip_completed'],
+        'sms_new_message': prefs['sms_new_message'],
+        'sms_status_changed': prefs['sms_status_changed']
+    }
+
+@app.put("/api/users/me/notification-preferences")
+async def update_notification_preferences(
+    email_trip_started: bool = None,
+    email_trip_completed: bool = None,
+    email_new_message: bool = None,
+    email_status_changed: bool = None,
+    sms_trip_started: bool = None,
+    sms_trip_completed: bool = None,
+    sms_new_message: bool = None,
+    sms_status_changed: bool = None,
+    current_user: dict = Depends(get_current_user)
+):
+    """Update notification preferences for current user"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT * FROM notification_preferences
+        WHERE user_id = %s
+    """, (current_user['id'],))
+    
+    prefs = cursor.fetchone()
+    
+    if not prefs:
+        cursor.execute("""
+            INSERT INTO notification_preferences (user_id)
+            VALUES (%s)
+        """, (current_user['id'],))
+        conn.commit()
+    
+    update_fields = []
+    update_values = []
+    
+    if email_trip_started is not None:
+        update_fields.append('email_trip_started = %s')
+        update_values.append(email_trip_started)
+    if email_trip_completed is not None:
+        update_fields.append('email_trip_completed = %s')
+        update_values.append(email_trip_completed)
+    if email_new_message is not None:
+        update_fields.append('email_new_message = %s')
+        update_values.append(email_new_message)
+    if email_status_changed is not None:
+        update_fields.append('email_status_changed = %s')
+        update_values.append(email_status_changed)
+    if sms_trip_started is not None:
+        update_fields.append('sms_trip_started = %s')
+        update_values.append(sms_trip_started)
+    if sms_trip_completed is not None:
+        update_fields.append('sms_trip_completed = %s')
+        update_values.append(sms_trip_completed)
+    if sms_new_message is not None:
+        update_fields.append('sms_new_message = %s')
+        update_values.append(sms_new_message)
+    if sms_status_changed is not None:
+        update_fields.append('sms_status_changed = %s')
+        update_values.append(sms_status_changed)
+    
+    if update_fields:
+        update_fields.append('updated_at = NOW()')
+        update_values.append(current_user['id'])
+        
+        cursor.execute(f"""
+            UPDATE notification_preferences
+            SET {', '.join(update_fields)}
+            WHERE user_id = %s
+        """, update_values)
+        
+        conn.commit()
+    
+    cursor.execute("""
+        SELECT * FROM notification_preferences
+        WHERE user_id = %s
+    """, (current_user['id'],))
+    
+    prefs = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    
+    return {
+        'success': True,
+        'preferences': {
+            'user_id': prefs['user_id'],
+            'email_trip_started': prefs['email_trip_started'],
+            'email_trip_completed': prefs['email_trip_completed'],
+            'email_new_message': prefs['email_new_message'],
+            'email_status_changed': prefs['email_status_changed'],
+            'sms_trip_started': prefs['sms_trip_started'],
+            'sms_trip_completed': prefs['sms_trip_completed'],
+            'sms_new_message': prefs['sms_new_message'],
+            'sms_status_changed': prefs['sms_status_changed']
+        }
+    }
