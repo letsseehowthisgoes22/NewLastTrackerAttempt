@@ -198,6 +198,14 @@ function LiveLocationUpdater({
       if (isLive && !usePolling) {
         startPolling();
       }
+
+      // Attempt to reconnect automatically after short delay
+      setTimeout(() => {
+        if (socket && socket.disconnected) {
+          console.log('Attempting to reconnect WebSocket...');
+          socket.connect();
+        }
+      }, 1000);
     });
 
     socket.on('connect_error', (error) => {
@@ -237,9 +245,99 @@ export const TripMap: React.FC<TripMapProps> = ({
   const [flightInfo, setFlightInfo] = useState<FlightInfo | null>(null);
   const [flightInfoError, setFlightInfoError] = useState<string | null>(null);
   const [trackingMode, setTrackingMode] = useState<'gps' | 'flight' | 'unknown'>('gps');
+  const [routePolyline, setRoutePolyline] = useState<Array<[number, number]>>([]);
+  const [routeDistance, setRouteDistance] = useState<number | null>(null);
+  const [routeDuration, setRouteDuration] = useState<number | null>(null);
+  const [traveledDistance, setTraveledDistance] = useState<number>(0);
+  const [routeProgress, setRouteProgress] = useState<number>(0);
 
-  const centerLat = (pickupLat + dropoffLat) / 2;
-  const centerLng = (pickupLng + dropoffLng) / 2;
+  // Convert and validate coordinates (handles both number and string from backend)
+  const convertToNumber = (value: number | string | null | undefined): number | null => {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'number') return isNaN(value) ? null : value;
+    if (typeof value === 'string') {
+      const parsed = parseFloat(value);
+      return isNaN(parsed) ? null : parsed;
+    }
+    return null;
+  };
+  
+  const validPickupLat = convertToNumber(pickupLat);
+  const validPickupLng = convertToNumber(pickupLng);
+  const validDropoffLat = convertToNumber(dropoffLat);
+  const validDropoffLng = convertToNumber(dropoffLng);
+
+  // Don't render if coordinates are invalid
+  if (!validPickupLat || !validPickupLng || !validDropoffLat || !validDropoffLng) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gray-100 rounded-lg">
+        <p className="text-gray-500">Map unavailable: Invalid coordinates</p>
+      </div>
+    );
+  }
+
+  const centerLat = (validPickupLat + validDropoffLat) / 2;
+  const centerLng = (validPickupLng + validDropoffLng) / 2;
+
+  // Calculate distance between two coordinates using Haversine formula
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // Earth's radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  useEffect(() => {
+    // Always fetch route when component mounts or coordinates change
+    if (!validPickupLat || !validPickupLng || !validDropoffLat || !validDropoffLng) return;
+
+    const fetchRoute = async () => {
+      try {
+        // Use OSRM demo server for routing
+        const url = `https://router.project-osrm.org/route/v1/driving/${validPickupLng},${validPickupLat};${validDropoffLng},${validDropoffLat}?overview=full&geometries=geojson`;
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        if (data.code === 'Ok' && data.routes && data.routes.length > 0) {
+          const route = data.routes[0];
+          const coordinates = route.geometry.coordinates.map((coord: [number, number]) => [coord[1], coord[0]] as [number, number]);
+          setRoutePolyline(coordinates);
+          setRouteDistance(route.distance / 1000); // Convert to km
+          setRouteDuration(Math.round(route.duration / 60)); // Convert to minutes
+        }
+      } catch (error) {
+        console.error('Failed to fetch route:', error);
+        // Fallback: simple straight line
+        setRoutePolyline([[validPickupLat, validPickupLng], [validDropoffLat, validDropoffLng]]);
+        const distance = calculateDistance(validPickupLat, validPickupLng, validDropoffLat, validDropoffLng);
+        setRouteDistance(distance);
+      }
+    };
+
+    fetchRoute();
+  }, [validPickupLat, validPickupLng, validDropoffLat, validDropoffLng]);
+
+  // Calculate traveled distance and progress
+  useEffect(() => {
+    if (locationHistory.length > 1 && routeDistance) {
+      let totalTraveled = 0;
+      for (let i = 1; i < locationHistory.length; i++) {
+        const [lat1, lng1] = locationHistory[i - 1];
+        const [lat2, lng2] = locationHistory[i];
+        totalTraveled += calculateDistance(lat1, lng1, lat2, lng2);
+      }
+      setTraveledDistance(totalTraveled);
+      setRouteProgress(Math.min((totalTraveled / routeDistance) * 100, 100));
+    } else if (locationHistory.length === 0) {
+      setTraveledDistance(0);
+      setRouteProgress(0);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationHistory, routeDistance]);
 
   useEffect(() => {
     if (!isLive || !tripId || !token) return;
@@ -360,7 +458,7 @@ export const TripMap: React.FC<TripMapProps> = ({
           />
           
           {/* Pickup Marker (Green) */}
-          <Marker position={[pickupLat, pickupLng]} icon={pickupIcon}>
+          <Marker position={[validPickupLat, validPickupLng]} icon={pickupIcon}>
             <Popup>
               <div className="text-sm">
                 <strong>Pickup Location</strong>
@@ -371,7 +469,7 @@ export const TripMap: React.FC<TripMapProps> = ({
           </Marker>
           
           {/* Dropoff Marker (Red) */}
-          <Marker position={[dropoffLat, dropoffLng]} icon={dropoffIcon}>
+          <Marker position={[validDropoffLat, validDropoffLng]} icon={dropoffIcon}>
             <Popup>
               <div className="text-sm">
                 <strong>Dropoff Location</strong>
@@ -402,6 +500,17 @@ export const TripMap: React.FC<TripMapProps> = ({
             </Marker>
           )}
 
+          {/* Route Polyline - shows planned route between pickup and dropoff */}
+          {routePolyline.length > 0 && (
+            <Polyline
+              positions={routePolyline}
+              color="#9CA3AF"
+              weight={4}
+              opacity={0.5}
+              dashArray="10, 5"
+            />
+          )}
+
           {/* Breadcrumb Trail - only show if live tracking and history exists */}
           {isLive && locationHistory.length > 1 && (
             <Polyline
@@ -414,10 +523,10 @@ export const TripMap: React.FC<TripMapProps> = ({
           
           {/* Auto-fit bounds to show both markers */}
           <FitBounds 
-            pickupLat={pickupLat} 
-            pickupLng={pickupLng} 
-            dropoffLat={dropoffLat} 
-            dropoffLng={dropoffLng} 
+            pickupLat={validPickupLat} 
+            pickupLng={validPickupLng} 
+            dropoffLat={validDropoffLat} 
+            dropoffLng={validDropoffLng} 
           />
 
           {/* Live location updater */}
@@ -431,6 +540,45 @@ export const TripMap: React.FC<TripMapProps> = ({
           )}
         </MapContainer>
       </div>
+
+      {/* Route information and progress */}
+      {routeDistance && (
+        <div className="bg-blue-50 px-4 py-2 border-t">
+          <div className="flex items-center justify-between text-sm mb-2">
+            <div className="flex-1">
+              <div className="font-medium text-blue-900">Route Information</div>
+              <div className="text-xs text-blue-800 mt-1">
+                Total Distance: {routeDistance.toFixed(1)} km
+                {routeDuration && ` • Estimated Time: ${routeDuration} min`}
+              </div>
+            </div>
+          </div>
+          {isLive && (
+            <>
+              <div className="mt-2 mb-1">
+                <div className="flex justify-between text-xs text-blue-800 mb-1">
+                  <span>Progress</span>
+                  <span>{routeProgress.toFixed(1)}%</span>
+                </div>
+                <div className="w-full bg-blue-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${routeProgress}%` }}
+                  />
+                </div>
+              </div>
+              <div className="text-xs text-blue-800 mt-1">
+                Traveled: {traveledDistance.toFixed(1)} km / {routeDistance.toFixed(1)} km
+                {currentLocation && routeDistance && (
+                  <span className="ml-2">
+                    • Remaining: {(routeDistance - traveledDistance).toFixed(1)} km
+                  </span>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Tracking mode indicator */}
       {isLive && (

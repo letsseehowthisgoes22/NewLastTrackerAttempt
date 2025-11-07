@@ -20,11 +20,12 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
   const socketRef = useRef<Socket | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const currentUserRole = user?.role || '';
+  const WS_URL = import.meta.env.VITE_WS_URL || 'http://10.201.82.252:8000';
 
   useEffect(() => {
     if (!token || !tripId) return;
 
-    const socket = io('http://localhost:8000', {
+    const socket = io(WS_URL, {
       transports: ['websocket', 'polling']
     });
     socketRef.current = socket;

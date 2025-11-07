@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { LoginResponse, User } from '../types';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://10.201.82.252:8000';
 
 const api = axios.create({
   baseURL: API_URL,
