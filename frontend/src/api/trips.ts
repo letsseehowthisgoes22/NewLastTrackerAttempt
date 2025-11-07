@@ -104,3 +104,30 @@ export const getUsersByRole = async (token: string, role: string): Promise<User[
   });
   return response.data;
 };
+
+export interface FlightInfo {
+  flight_number: string;
+  airline: string;
+  status: string;
+  departure_airport: string;
+  departure_gate?: string;
+  departure_time?: string;
+  arrival_airport: string;
+  arrival_gate?: string;
+  arrival_time?: string;
+  current_position?: {
+    latitude: number;
+    longitude: number;
+    altitude?: number;
+    speed?: number;
+  };
+}
+
+export const getFlightInfo = async (token: string, tripId: number): Promise<FlightInfo> => {
+  const response = await api.get<FlightInfo>(`/api/trips/${tripId}/flight`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  return response.data;
+};
