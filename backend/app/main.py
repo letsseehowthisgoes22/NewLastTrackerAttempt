@@ -1412,3 +1412,143 @@ async def release_chat(
     }, room=f'trip_{trip_id}')
     
     return {"success": True, "message": "Chat released successfully"}
+
+@app.put("/api/trips/{trip_id}/status")
+async def update_trip_status(
+    trip_id: int,
+    status: str,
+    notes: str = "",
+    current_user: dict = Depends(get_current_user)
+):
+    """Update trip status"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get trip
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Trip not found")
+    
+    if current_user['role'] != 'admin' and trip['assigned_agent_id'] != current_user['id']:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=403, detail="Only assigned agent or admin can update status")
+    
+    # Validate status
+    valid_statuses = ['scheduled', 'in_progress', 'completed', 'cancelled']
+    if status not in valid_statuses:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {valid_statuses}")
+    
+    old_status = trip['status']
+    
+    cursor.execute("""
+        INSERT INTO trip_status_history (trip_id, changed_by_id, old_status, new_status, notes)
+        VALUES (%s, %s, %s, %s, %s)
+    """, (trip_id, current_user['id'], old_status, status, notes))
+    
+    # Update trip status
+    update_fields = ['status = %s', 'updated_at = NOW()']
+    update_values = [status]
+    
+    if status == 'in_progress' and not trip['actual_start']:
+        update_fields.append('actual_start = NOW()')
+    elif status == 'completed' and not trip['actual_end']:
+        update_fields.append('actual_end = NOW()')
+    
+    update_values.append(trip_id)
+    cursor.execute(f"""
+        UPDATE trips
+        SET {', '.join(update_fields)}
+        WHERE id = %s
+    """, update_values)
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    user_name = f"{current_user.get('first_name', '')} {current_user.get('last_name', '')}".strip()
+    if not user_name:
+        user_name = current_user['email']
+    
+    await sio.emit('status_changed', {
+        'trip_id': trip_id,
+        'old_status': old_status,
+        'new_status': status,
+        'changed_by': user_name,
+        'timestamp': datetime.now().isoformat()
+    }, room=f'trip_{trip_id}')
+    
+    return {
+        'success': True,
+        'trip_id': trip_id,
+        'status': status
+    }
+
+@app.get("/api/trips/{trip_id}/status-history")
+async def get_status_history(
+    trip_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Get status change history for a trip"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get trip to verify access
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Trip not found")
+    
+    # Verify user has access to this trip
+    if current_user['role'] not in ['admin', 'agent']:
+        if (trip['assigned_parent_id'] != current_user['id'] and 
+            trip['assigned_clinician_id'] != current_user['id']):
+            cursor.close()
+            conn.close()
+            raise HTTPException(status_code=403, detail="Access denied")
+    
+    cursor.execute("""
+        SELECT 
+            sh.id,
+            sh.old_status,
+            sh.new_status,
+            sh.changed_at,
+            sh.notes,
+            u.first_name,
+            u.last_name,
+            u.email
+        FROM trip_status_history sh
+        LEFT JOIN users u ON sh.changed_by_id = u.id
+        WHERE sh.trip_id = %s
+        ORDER BY sh.changed_at DESC
+    """, (trip_id,))
+    
+    history = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    
+    formatted_history = []
+    for record in history:
+        changed_by = f"{record['first_name']} {record['last_name']}".strip()
+        if not changed_by:
+            changed_by = record['email']
+        
+        formatted_history.append({
+            'id': record['id'],
+            'old_status': record['old_status'],
+            'new_status': record['new_status'],
+            'changed_by': changed_by,
+            'changed_at': record['changed_at'].isoformat() if record['changed_at'] else None,
+            'notes': record['notes']
+        })
+    
+    return {'history': formatted_history}

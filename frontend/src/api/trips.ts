@@ -249,3 +249,43 @@ export const releaseChat = async (token: string, tripId: number): Promise<{ succ
   );
   return response.data;
 };
+
+export interface StatusHistoryRecord {
+  id: number;
+  old_status: string;
+  new_status: string;
+  changed_by: string;
+  changed_at: string;
+  notes: string;
+}
+
+export interface StatusHistoryResponse {
+  history: StatusHistoryRecord[];
+}
+
+export const updateTripStatus = async (
+  token: string, 
+  tripId: number, 
+  status: string, 
+  notes: string = ""
+): Promise<{ success: boolean; trip_id: number; status: string }> => {
+  const response = await api.put<{ success: boolean; trip_id: number; status: string }>(
+    `/api/trips/${tripId}/status`,
+    { status, notes },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
+export const getStatusHistory = async (token: string, tripId: number): Promise<StatusHistoryResponse> => {
+  const response = await api.get<StatusHistoryResponse>(`/api/trips/${tripId}/status-history`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  return response.data;
+};
