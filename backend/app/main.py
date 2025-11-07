@@ -15,8 +15,12 @@ from app.models import (
     DocumentResponse, MessageResponse,
     LocationUpdate, LocationUpdateResponse
 )
+from app.websocket import sio, broadcast_location_update
+import socketio
 
 app = FastAPI()
+
+socket_app = socketio.ASGIApp(sio, app)
 
 # Disable CORS. Do not remove this for full-stack development.
 app.add_middleware(
@@ -876,6 +880,13 @@ async def post_location(trip_id: int, location_data: LocationUpdate, current_use
     conn.commit()
     cursor.close()
     conn.close()
+    
+    await broadcast_location_update(trip_id, {
+        'latitude': float(location['latitude']),
+        'longitude': float(location['longitude']),
+        'accuracy': float(location['accuracy']) if location['accuracy'] else None,
+        'timestamp': location['timestamp'].isoformat()
+    })
     
     return LocationUpdateResponse(**location)
 

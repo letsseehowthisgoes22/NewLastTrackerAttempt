@@ -4,6 +4,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { getLatestLocation, getLocationHistory } from '../api/trips';
 import { useAuth } from '../context/AuthContext';
+import { io, Socket } from 'socket.io-client';
 
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
@@ -74,34 +75,137 @@ function FitBounds({ pickupLat, pickupLng, dropoffLat, dropoffLng }: {
   return null;
 }
 
-function LiveLocationUpdater({ tripId, onLocationUpdate }: { tripId: number; onLocationUpdate: (location: { lat: number; lng: number } | null, timestamp: string | null) => void }) {
+type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'polling';
+
+function LiveLocationUpdater({ 
+  tripId, 
+  isLive,
+  onLocationUpdate,
+  onConnectionStatusChange 
+}: { 
+  tripId: number;
+  isLive: boolean;
+  onLocationUpdate: (location: { lat: number; lng: number } | null, timestamp: string | null) => void;
+  onConnectionStatusChange: (status: ConnectionStatus) => void;
+}) {
   const { token } = useAuth();
   const map = useMap();
+  const socketRef = useRef<Socket | null>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [usePolling, setUsePolling] = useState(false);
+
+  const fetchLocation = async () => {
+    try {
+      const data = await getLatestLocation(token!, tripId);
+      if (data.latitude && data.longitude) {
+        const location = { lat: data.latitude, lng: data.longitude };
+        onLocationUpdate(location, data.timestamp);
+        map.panTo([data.latitude, data.longitude]);
+      }
+    } catch (error: any) {
+      if (error.response?.status !== 404) {
+        console.error('Failed to fetch location:', error);
+      }
+    }
+  };
+
+  const startPolling = () => {
+    console.log('Starting polling fallback');
+    setUsePolling(true);
+    onConnectionStatusChange('polling');
+    
+    fetchLocation();
+    
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+    
+    pollingIntervalRef.current = setInterval(fetchLocation, 10000);
+  };
+
+  const stopPolling = () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+  };
 
   useEffect(() => {
-    if (!token || !tripId) return;
-
-    const fetchLocation = async () => {
-      try {
-        const data = await getLatestLocation(token, tripId);
-        if (data.latitude && data.longitude) {
-          const location = { lat: data.latitude, lng: data.longitude };
-          onLocationUpdate(location, data.timestamp);
-          map.panTo([data.latitude, data.longitude]);
-        }
-      } catch (error: any) {
-        if (error.response?.status !== 404) {
-          console.error('Failed to fetch location:', error);
-        }
+    if (!token || !tripId || !isLive) {
+      stopPolling();
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
       }
+      return;
+    }
+
+    onConnectionStatusChange('connecting');
+
+    const WS_URL = import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_URL || window.location.origin;
+    const socket = io(WS_URL, {
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      timeout: 10000
+    });
+
+    socketRef.current = socket;
+
+    socket.on('connect', () => {
+      console.log('WebSocket connected');
+      onConnectionStatusChange('connected');
+      setUsePolling(false);
+      stopPolling();
+
+      socket.emit('subscribe_trip', {
+        trip_id: tripId,
+        token: token
+      });
+    });
+
+    socket.on('subscribed', (data) => {
+      console.log('Subscribed to trip:', data.trip_id);
+    });
+
+    socket.on('location_update', (data) => {
+      console.log('Received location update via WebSocket:', data);
+      const location = { lat: data.latitude, lng: data.longitude };
+      onLocationUpdate(location, data.timestamp);
+      map.panTo([data.latitude, data.longitude]);
+    });
+
+    socket.on('error', (error) => {
+      console.error('WebSocket error:', error);
+      if (!usePolling) {
+        startPolling();
+      }
+    });
+
+    socket.on('disconnect', () => {
+      console.log('WebSocket disconnected');
+      onConnectionStatusChange('disconnected');
+      if (isLive && !usePolling) {
+        startPolling();
+      }
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error('WebSocket connection error:', error);
+      if (!usePolling) {
+        startPolling();
+      }
+    });
+
+    return () => {
+      if (socket) {
+        socket.emit('unsubscribe_trip', { trip_id: tripId });
+        socket.disconnect();
+      }
+      stopPolling();
     };
-
-    fetchLocation();
-
-    const intervalId = setInterval(fetchLocation, 10000);
-
-    return () => clearInterval(intervalId);
-  }, [tripId, token, map, onLocationUpdate]);
+  }, [tripId, token, isLive, map]);
 
   return null;
 }
@@ -120,6 +224,7 @@ export const TripMap: React.FC<TripMapProps> = ({
   const [currentLocation, setCurrentLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationHistory, setLocationHistory] = useState<Array<[number, number]>>([]);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
 
   const centerLat = (pickupLat + dropoffLat) / 2;
   const centerLng = (pickupLng + dropoffLng) / 2;
@@ -167,6 +272,21 @@ export const TripMap: React.FC<TripMapProps> = ({
     if (minutes < 60) return `${minutes} minutes ago`;
     const hours = Math.floor(minutes / 60);
     return `${hours} hours ago`;
+  };
+
+  const getConnectionStatusDisplay = () => {
+    switch (connectionStatus) {
+      case 'connected':
+        return { icon: '🟢', text: 'Live (WebSocket)', color: 'text-green-600' };
+      case 'polling':
+        return { icon: '🟡', text: 'Live (Polling)', color: 'text-yellow-600' };
+      case 'connecting':
+        return { icon: '🟡', text: 'Connecting...', color: 'text-yellow-600' };
+      case 'disconnected':
+        return { icon: '🔴', text: 'Disconnected', color: 'text-red-600' };
+      default:
+        return { icon: '⚪', text: 'Unknown', color: 'text-gray-600' };
+    }
   };
 
   return (
@@ -246,7 +366,12 @@ export const TripMap: React.FC<TripMapProps> = ({
 
           {/* Live location updater */}
           {isLive && tripId && (
-            <LiveLocationUpdater tripId={tripId} onLocationUpdate={handleLocationUpdate} />
+            <LiveLocationUpdater 
+              tripId={tripId} 
+              isLive={isLive}
+              onLocationUpdate={handleLocationUpdate}
+              onConnectionStatusChange={setConnectionStatus}
+            />
           )}
         </MapContainer>
       </div>
@@ -256,8 +381,10 @@ export const TripMap: React.FC<TripMapProps> = ({
         <div className="bg-gray-50 px-4 py-2 border-t">
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center gap-2">
-              <span className="text-green-500">🟢</span>
-              <span className="font-medium">Live tracking active</span>
+              <span>{getConnectionStatusDisplay().icon}</span>
+              <span className={`font-medium ${getConnectionStatusDisplay().color}`}>
+                {getConnectionStatusDisplay().text}
+              </span>
             </div>
             {lastUpdate && (
               <span className="text-gray-600">
