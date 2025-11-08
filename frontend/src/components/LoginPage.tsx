@@ -4,10 +4,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 export const LoginPage = () => {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [role, setRole] = useState<string>('parent');
+  const [passcode, setPasscode] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAuth();
@@ -18,9 +19,9 @@ export const LoginPage = () => {
     setIsLoading(true);
 
     try {
-      await login(email, password);
+      await login(role, passcode);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Invalid email or password');
+      setError(err.response?.data?.detail || 'Invalid credentials');
     } finally {
       setIsLoading(false);
     }
@@ -46,30 +47,32 @@ export const LoginPage = () => {
             )}
             
             <div className="space-y-2">
-              <label htmlFor="email" className="text-sm font-medium">
-                Email
+              <label htmlFor="role" className="text-sm font-medium">
+                Role
               </label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="admin@iyt.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={isLoading}
-              />
+              <Select value={role} onValueChange={setRole} disabled={isLoading}>
+                <SelectTrigger id="role">
+                  <SelectValue placeholder="Select role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="agent">Agent</SelectItem>
+                  <SelectItem value="parent">Parent/Guardian</SelectItem>
+                  <SelectItem value="clinician">Provider/Clinician</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="password" className="text-sm font-medium">
-                Password
+              <label htmlFor="passcode" className="text-sm font-medium">
+                Passcode
               </label>
               <Input
-                id="password"
-                type="password"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                id="passcode"
+                type="text"
+                placeholder="Enter passcode"
+                value={passcode}
+                onChange={(e) => setPasscode(e.target.value)}
                 required
                 disabled={isLoading}
               />
@@ -81,12 +84,11 @@ export const LoginPage = () => {
           </form>
 
           <div className="mt-6 text-sm text-gray-600">
-            <p className="font-semibold mb-2">Test Accounts:</p>
+            <p className="font-semibold mb-2">How it works:</p>
             <ul className="space-y-1 text-xs">
-              <li>Admin: admin@iyt.com / admin123</li>
-              <li>Agent: agent@iyt.com / agent123</li>
-              <li>Parent: parent@iyt.com / parent123</li>
-              <li>Clinician: clinician@iyt.com / clinician123</li>
+              <li>Choose your role, enter the passcode provided by the administrator.</li>
+              <li>Admins/agents can reuse shared passcodes and rotate them as needed.</li>
+              <li>Parents and providers receive unique passcodes per trip.</li>
             </ul>
           </div>
         </CardContent>

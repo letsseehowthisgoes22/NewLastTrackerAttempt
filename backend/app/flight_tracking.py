@@ -22,10 +22,14 @@ def fetch_flight_status(flight_number: str) -> Optional[Dict[str, Any]]:
     if not flight_number:
         return None
     
+    normalized_flight = flight_number.replace(" ", "").strip().upper()
+    if not normalized_flight:
+        return None
+    
     url = 'http://api.aviationstack.com/v1/flights'
     params = {
         'access_key': AVIATION_STACK_API_KEY,
-        'flight_iata': flight_number.strip().upper()
+        'flight_iata': normalized_flight
     }
     
     try:
@@ -42,7 +46,7 @@ def fetch_flight_status(flight_number: str) -> Optional[Dict[str, Any]]:
             flight = data['data'][0]
             
             flight_info = {
-                'flight_number': flight.get('flight', {}).get('iata', flight_number),
+                'flight_number': flight.get('flight', {}).get('iata', normalized_flight),
                 'airline': flight.get('airline', {}).get('name', 'Unknown'),
                 'status': flight.get('flight_status', 'unknown'),
                 'departure_airport': flight.get('departure', {}).get('airport', 'Unknown'),

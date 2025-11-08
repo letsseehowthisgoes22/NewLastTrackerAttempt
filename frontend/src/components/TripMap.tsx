@@ -63,6 +63,8 @@ interface TripMapProps {
   dropoffLocation: string;
   tripId?: number;
   isLive?: boolean;
+  locationSharingEnabled?: boolean;
+  onSharingStatusChange?: (enabled: boolean) => void;
 }
 
 function FitBounds({ pickupLat, pickupLng, dropoffLat, dropoffLng }: { 
@@ -89,13 +91,17 @@ type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'polling';
 function LiveLocationUpdater({ 
   tripId, 
   isLive,
+  locationSharingEnabled,
   onLocationUpdate,
-  onConnectionStatusChange 
+  onConnectionStatusChange,
+  onLocationSharingStatusChange
 }: { 
   tripId: number;
   isLive: boolean;
+  locationSharingEnabled: boolean;
   onLocationUpdate: (location: { lat: number; lng: number } | null, timestamp: string | null) => void;
   onConnectionStatusChange: (status: ConnectionStatus) => void;
+  onLocationSharingStatusChange: (enabled: boolean) => void;
 }) {
   const { token } = useAuth();
   const map = useMap();
@@ -112,13 +118,23 @@ function LiveLocationUpdater({
         map.panTo([data.latitude, data.longitude]);
       }
     } catch (error: any) {
-      if (error.response?.status !== 404) {
+      if (error.response?.status === 403) {
+        console.warn('Location sharing disabled; stopping live updates.');
+        onConnectionStatusChange('disconnected');
+        onLocationSharingStatusChange(false);
+        stopPolling();
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+          socketRef.current = null;
+        }
+      } else if (error.response?.status !== 404) {
         console.error('Failed to fetch location:', error);
       }
     }
   };
 
   const startPolling = () => {
+    if (!locationSharingEnabled) return;
     console.log('Starting polling fallback');
     setUsePolling(true);
     onConnectionStatusChange('polling');
@@ -140,7 +156,19 @@ function LiveLocationUpdater({
   };
 
   useEffect(() => {
-    if (!token || !tripId || !isLive) {
+    if (!locationSharingEnabled) {
+      stopPolling();
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
+      onConnectionStatusChange('disconnected');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationSharingEnabled]);
+
+  useEffect(() => {
+    if (!token || !tripId || !isLive || !locationSharingEnabled) {
       stopPolling();
       if (socketRef.current) {
         socketRef.current.disconnect();
@@ -185,6 +213,20 @@ function LiveLocationUpdater({
       map.panTo([data.latitude, data.longitude]);
     });
 
+    socket.on('location_sharing_status', (payload: { trip_id: number; enabled: boolean }) => {
+      if (payload.trip_id === tripId) {
+        onLocationSharingStatusChange(payload.enabled);
+        if (!payload.enabled) {
+          onConnectionStatusChange('disconnected');
+          stopPolling();
+          if (socketRef.current) {
+            socketRef.current.disconnect();
+            socketRef.current = null;
+          }
+        }
+      }
+    });
+
     socket.on('error', (error) => {
       console.error('WebSocket error:', error);
       if (!usePolling) {
@@ -217,12 +259,13 @@ function LiveLocationUpdater({
 
     return () => {
       if (socket) {
+        socket.off('location_sharing_status');
         socket.emit('unsubscribe_trip', { trip_id: tripId });
         socket.disconnect();
       }
       stopPolling();
     };
-  }, [tripId, token, isLive, map]);
+  }, [tripId, token, isLive, map, locationSharingEnabled]);
 
   return null;
 }
@@ -236,6 +279,8 @@ export const TripMap: React.FC<TripMapProps> = ({
   dropoffLocation,
   tripId,
   isLive = false,
+  locationSharingEnabled = true,
+  onSharingStatusChange,
 }) => {
   const { token } = useAuth();
   const [currentLocation, setCurrentLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -250,6 +295,16 @@ export const TripMap: React.FC<TripMapProps> = ({
   const [routeDuration, setRouteDuration] = useState<number | null>(null);
   const [traveledDistance, setTraveledDistance] = useState<number>(0);
   const [routeProgress, setRouteProgress] = useState<number>(0);
+  const [sharingEnabled, setSharingEnabled] = useState<boolean>(locationSharingEnabled);
+  const updateSharingState = (enabled: boolean) => {
+    setSharingEnabled((prev) => {
+      if (prev === enabled) {
+        return prev;
+      }
+      onSharingStatusChange?.(enabled);
+      return enabled;
+    });
+  };
 
   // Convert and validate coordinates (handles both number and string from backend)
   const convertToNumber = (value: number | string | null | undefined): number | null => {
@@ -290,6 +345,19 @@ export const TripMap: React.FC<TripMapProps> = ({
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
   };
+
+  useEffect(() => {
+    updateSharingState(locationSharingEnabled);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locationSharingEnabled]);
+
+  useEffect(() => {
+    if (!sharingEnabled) {
+      setCurrentLocation(null);
+      setLocationHistory([]);
+      setConnectionStatus('disconnected');
+    }
+  }, [sharingEnabled]);
 
   useEffect(() => {
     // Always fetch route when component mounts or coordinates change
@@ -340,7 +408,7 @@ export const TripMap: React.FC<TripMapProps> = ({
   }, [locationHistory, routeDistance]);
 
   useEffect(() => {
-    if (!isLive || !tripId || !token) return;
+    if (!isLive || !tripId || !token || !sharingEnabled) return;
 
     const fetchHistory = async () => {
       try {
@@ -349,8 +417,12 @@ export const TripMap: React.FC<TripMapProps> = ({
           const history = data.locations.reverse().map(loc => [loc.latitude, loc.longitude] as [number, number]);
           setLocationHistory(history);
         }
-      } catch (error) {
-        console.error('Failed to fetch location history:', error);
+      } catch (error: any) {
+        if (error.response?.status === 403) {
+          updateSharingState(false);
+        } else {
+          console.error('Failed to fetch location history:', error);
+        }
       }
     };
 
@@ -382,9 +454,13 @@ export const TripMap: React.FC<TripMapProps> = ({
     fetchHistory();
     fetchFlight();
     fetchTrackingMode();
-  }, [isLive, tripId, token]);
+  }, [isLive, tripId, token, sharingEnabled]);
 
   const handleLocationUpdate = (location: { lat: number; lng: number } | null, timestamp: string | null) => {
+    if (!sharingEnabled || !location) {
+      return;
+    }
+
     if (location) {
       setCurrentLocation(location);
       setLastUpdate(timestamp ? new Date(timestamp) : new Date());
@@ -445,7 +521,7 @@ export const TripMap: React.FC<TripMapProps> = ({
 
   return (
     <div className="w-full rounded-lg overflow-hidden border shadow-md">
-      <div className="h-[400px]">
+      <div className="relative h-[400px]">
         <MapContainer
           center={[centerLat, centerLng]}
           zoom={10}
@@ -530,19 +606,30 @@ export const TripMap: React.FC<TripMapProps> = ({
           />
 
           {/* Live location updater */}
-          {isLive && tripId && (
+          {isLive && tripId && sharingEnabled && (
             <LiveLocationUpdater 
               tripId={tripId} 
               isLive={isLive}
+              locationSharingEnabled={sharingEnabled}
               onLocationUpdate={handleLocationUpdate}
               onConnectionStatusChange={setConnectionStatus}
+              onLocationSharingStatusChange={updateSharingState}
             />
           )}
         </MapContainer>
+
+        {!sharingEnabled && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm text-center px-6">
+            <p className="font-semibold text-gray-700">Location sharing is disabled</p>
+            <p className="text-sm text-gray-500 mt-2">
+              Enable location sharing to view live transport updates and vehicle progress.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Route information and progress */}
-      {routeDistance && (
+      {routeDistance && sharingEnabled && (
         <div className="bg-blue-50 px-4 py-2 border-t">
           <div className="flex items-center justify-between text-sm mb-2">
             <div className="flex-1">
@@ -553,7 +640,7 @@ export const TripMap: React.FC<TripMapProps> = ({
               </div>
             </div>
           </div>
-          {isLive && (
+          {isLive && sharingEnabled && (
             <>
               <div className="mt-2 mb-1">
                 <div className="flex justify-between text-xs text-blue-800 mb-1">
@@ -581,7 +668,7 @@ export const TripMap: React.FC<TripMapProps> = ({
       )}
 
       {/* Tracking mode indicator */}
-      {isLive && (
+      {isLive && sharingEnabled && (
         <div className="bg-gray-50 px-4 py-2 border-t">
           <div className="flex items-center justify-between text-sm mb-2">
             <div className="flex items-center gap-2">

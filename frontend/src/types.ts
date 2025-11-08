@@ -14,7 +14,7 @@ export interface LoginResponse {
 export interface AuthContextType {
   user: User | null;
   token: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (role: string, passcode: string) => Promise<void>;
   logout: () => void;
   isLoading: boolean;
 }
@@ -38,6 +38,11 @@ export interface Trip {
   assigned_agent_id: number | null;
   assigned_parent_id: number | null;
   assigned_clinician_id: number | null;
+  agent_name: string | null;
+  agent_passcode?: string | null;
+  parent_name: string | null;
+  parent_passcode?: string | null;
+  clinician_passcode?: string | null;
   clinician_name: string | null;
   clinician_phone: string | null;
   clinician_email: string | null;
@@ -45,12 +50,11 @@ export interface Trip {
   created_by_id: number;
   created_at: string;
   updated_at: string;
-  agent_name: string | null;
-  parent_name: string | null;
   assigned_clinician_name: string | null;
   chat_admin_takeover?: boolean;
   chat_taken_over_by?: number | null;
   chat_takeover_at?: string | null;
+  location_sharing_enabled?: boolean;
 }
 
 export interface TripCreate {
@@ -65,35 +69,41 @@ export interface TripCreate {
   scheduled_end: string | null;
   flight_number: string | null;
   airline: string | null;
-  assigned_agent_id: number | null;
-  assigned_parent_id: number | null;
-  assigned_clinician_id: number | null;
+  agent_name: string | null;
+  agent_passcode: string | null;
+  parent_name: string | null;
+  parent_passcode: string | null;
+  clinician_passcode: string | null;
   clinician_name: string | null;
   clinician_phone: string | null;
   clinician_email: string | null;
   additional_info: string | null;
+  location_sharing_enabled?: boolean | null;
 }
 
 export interface TripUpdate {
-  client_name: string | null;
-  pickup_location: string | null;
-  dropoff_location: string | null;
-  pickup_lat: number | null;
-  pickup_lng: number | null;
-  dropoff_lat: number | null;
-  dropoff_lng: number | null;
-  scheduled_start: string | null;
-  scheduled_end: string | null;
-  flight_number: string | null;
-  airline: string | null;
-  assigned_agent_id: number | null;
-  assigned_parent_id: number | null;
-  assigned_clinician_id: number | null;
-  clinician_name: string | null;
-  clinician_phone: string | null;
-  clinician_email: string | null;
-  additional_info: string | null;
-  status: string | null;
+  client_name?: string | null;
+  pickup_location?: string | null;
+  dropoff_location?: string | null;
+  pickup_lat?: number | null;
+  pickup_lng?: number | null;
+  dropoff_lat?: number | null;
+  dropoff_lng?: number | null;
+  scheduled_start?: string | null;
+  scheduled_end?: string | null;
+  flight_number?: string | null;
+  airline?: string | null;
+  agent_name?: string | null;
+  agent_passcode?: string | null;
+  parent_name?: string | null;
+  parent_passcode?: string | null;
+  clinician_passcode?: string | null;
+  clinician_name?: string | null;
+  clinician_phone?: string | null;
+  clinician_email?: string | null;
+  additional_info?: string | null;
+  status?: string | null;
+  location_sharing_enabled?: boolean | null;
 }
 
 export interface Document {

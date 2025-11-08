@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Trip, TripCreate, User } from '../types';
+import { Trip, TripCreate, TripUpdate, User } from '../types';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://10.201.82.252:8000';
 
@@ -37,7 +37,7 @@ export const getTrip = async (token: string, tripId: number): Promise<Trip> => {
   return response.data;
 };
 
-export const updateTrip = async (token: string, tripId: number, tripData: Partial<TripCreate>): Promise<Trip> => {
+export const updateTrip = async (token: string, tripId: number, tripData: TripUpdate): Promise<Trip> => {
   const response = await api.put<Trip>(`/api/trips/${tripId}`, tripData, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -94,6 +94,19 @@ export const deleteTrip = async (token: string, tripId: number): Promise<void> =
       Authorization: `Bearer ${token}`,
     },
   });
+};
+
+export const setLocationSharing = async (token: string, tripId: number, enabled: boolean): Promise<{ success: boolean; location_sharing_enabled: boolean }> => {
+  const response = await api.post<{ success: boolean; location_sharing_enabled: boolean }>(
+    `/api/trips/${tripId}/location-sharing`,
+    { enabled },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
 };
 
 export const getUsersByRole = async (token: string, role: string): Promise<User[]> => {

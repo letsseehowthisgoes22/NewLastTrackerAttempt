@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getTrip, updateTrip, postLocation, getLatestLocation } from '../api/trips';
+import { getTrip, updateTrip, postLocation, setLocationSharing } from '../api/trips';
 import { Trip } from '../types';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -19,6 +19,7 @@ export const ActiveTrip = () => {
   const [isTracking, setIsTracking] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [currentLocation, setCurrentLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationToggleLoading, setLocationToggleLoading] = useState(false);
   const watchIdRef = useRef<number | null>(null);
   const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -30,9 +31,6 @@ export const ActiveTrip = () => {
         const data = await getTrip(token, parseInt(id));
         setTrip(data);
         
-        if (data.status === 'in_progress') {
-          startTracking();
-        }
       } catch (err: any) {
         setError(err.response?.data?.detail || 'Failed to load trip details');
       } finally {
@@ -47,8 +45,28 @@ export const ActiveTrip = () => {
     };
   }, [token, id]);
 
+  useEffect(() => {
+    if (!trip) return;
+
+    const privilegedUser = user?.role === 'admin' || user?.role === 'agent';
+    const sharingEnabled = trip.location_sharing_enabled !== false;
+    const shouldTrack = privilegedUser && trip.status === 'in_progress' && sharingEnabled;
+
+    if (shouldTrack && !isTracking) {
+      startTracking();
+    } else if ((!shouldTrack || !sharingEnabled) && isTracking) {
+      stopTracking();
+    }
+
+    if (!sharingEnabled) {
+      setCurrentLocation(null);
+      setLastUpdate(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trip, user?.role, isTracking]);
+
   const sendLocationToBackend = async (latitude: number, longitude: number, accuracy?: number) => {
-    if (!token || !id) return;
+    if (!token || !id || trip?.location_sharing_enabled === false) return;
 
     try {
       await postLocation(token, parseInt(id), {
@@ -58,12 +76,21 @@ export const ActiveTrip = () => {
       });
       setLastUpdate(new Date());
       setCurrentLocation({ lat: latitude, lng: longitude });
-    } catch (err) {
-      console.error('Failed to send location:', err);
+    } catch (err: any) {
+      if (err.response?.status === 403) {
+        setError(err.response?.data?.detail || 'Location sharing is currently disabled for this trip.');
+        stopTracking();
+      } else {
+        console.error('Failed to send location:', err);
+      }
     }
   };
 
   const startTracking = () => {
+    if (isTracking) return;
+    if (trip?.location_sharing_enabled === false) return;
+    if (user?.role !== 'admin' && user?.role !== 'agent') return;
+
     if (!navigator.geolocation) {
       setError('Geolocation is not supported by your browser');
       return;
@@ -110,6 +137,8 @@ export const ActiveTrip = () => {
   };
 
   const stopTracking = () => {
+    if (!isTracking) return;
+
     if (watchIdRef.current !== null) {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
@@ -127,9 +156,8 @@ export const ActiveTrip = () => {
     if (!token || !trip) return;
 
     try {
-      await updateTrip(token, trip.id, { status: 'in_progress' });
-      setTrip({ ...trip, status: 'in_progress' });
-      startTracking();
+      const updatedTrip = await updateTrip(token, trip.id, { status: 'in_progress' });
+      setTrip(updatedTrip);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to start trip');
     }
@@ -144,6 +172,28 @@ export const ActiveTrip = () => {
       navigate('/trips');
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to end trip');
+    }
+  };
+
+  const handleToggleLocationSharing = async () => {
+    if (!token || !trip) return;
+
+    const nextValue = !locationSharingOn;
+    setLocationToggleLoading(true);
+    setError('');
+
+    try {
+      const response = await setLocationSharing(token, trip.id, nextValue);
+      setTrip((prev) => (prev ? { ...prev, location_sharing_enabled: response.location_sharing_enabled } : prev));
+      if (!response.location_sharing_enabled) {
+        stopTracking();
+        setCurrentLocation(null);
+        setLastUpdate(null);
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to update location sharing');
+    } finally {
+      setLocationToggleLoading(false);
     }
   };
 
@@ -194,6 +244,7 @@ export const ActiveTrip = () => {
                     user?.role === 'agent' || 
                     (user?.role === 'parent' && trip.assigned_parent_id === user?.id) ||
                     (user?.role === 'clinician' && trip.assigned_clinician_id === user?.id);
+  const locationSharingOn = trip.location_sharing_enabled !== false;
 
   if (!hasAccess) {
     return (
@@ -282,26 +333,56 @@ export const ActiveTrip = () => {
                     dropoffLocation={trip.dropoff_location}
                     tripId={trip.id}
                     isLive={trip.status === 'in_progress'}
+                    locationSharingEnabled={locationSharingOn}
+                    onSharingStatusChange={(enabled) =>
+                      setTrip((prev) => (prev ? { ...prev, location_sharing_enabled: enabled } : prev))
+                    }
                   />
                 </div>
               </div>
             ) : null;
           })()}
 
-          {isTracking && (
-            <div className="border-t pt-4">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-green-500 text-2xl">📍</span>
-                <h3 className="text-lg font-semibold">Location Sharing Active</h3>
-              </div>
-              <p className="text-sm text-gray-600">Last Update: {getTimeSinceLastUpdate()}</p>
-              {currentLocation && (
-                <p className="text-xs text-gray-500 mt-1">
-                  Current: {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
+          <div className="border-t pt-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <span className={`text-2xl ${locationSharingOn ? 'text-green-500' : 'text-gray-400'}`}>📍</span>
+              <div>
+                <h3 className="text-lg font-semibold">Location Sharing</h3>
+                <p className="text-sm text-gray-600">
+                  {locationSharingOn
+                    ? lastUpdate
+                      ? `Last update ${getTimeSinceLastUpdate()}.`
+                      : 'Waiting for the first location update.'
+                    : 'Location sharing is currently disabled for all viewers.'}
                 </p>
-              )}
+                {locationSharingOn && currentLocation && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    Current: {currentLocation.lat.toFixed(6)}, {currentLocation.lng.toFixed(6)}
+                  </p>
+                )}
+                {isTracking && locationSharingOn && (
+                  <p className="text-xs text-green-600 mt-1">
+                    This device is actively sending location updates.
+                  </p>
+                )}
+              </div>
             </div>
-          )}
+
+            {(user?.role === 'admin' || user?.role === 'agent') && (
+              <Button
+                onClick={handleToggleLocationSharing}
+                variant={locationSharingOn ? 'outline' : 'default'}
+                className="w-full md:w-auto"
+                disabled={locationToggleLoading}
+              >
+                {locationToggleLoading
+                  ? 'Updating location sharing...'
+                  : locationSharingOn
+                    ? 'Disable Location Sharing'
+                    : 'Enable Location Sharing'}
+              </Button>
+            )}
+          </div>
 
           <div className="border-t pt-4">
             {trip.status === 'scheduled' && (user?.role === 'admin' || user?.role === 'agent') && (

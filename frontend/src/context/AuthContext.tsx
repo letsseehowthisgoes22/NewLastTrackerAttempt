@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, AuthContextType } from '../types';
-import * as authApi from '../api/auth';
+import { loginWithRolePasscode } from '../api/auth';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -20,9 +20,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setIsLoading(false);
   }, []);
 
-  const login = async (email: string, password: string) => {
+  const login = async (role: string, passcode: string) => {
     try {
-      const response = await authApi.login(email, password);
+      const response = await loginWithRolePasscode(role, passcode);
       setToken(response.token);
       setUser(response.user);
       localStorage.setItem('token', response.token);

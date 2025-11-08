@@ -1,17 +1,22 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getTrip, updateTrip, getUsersByRole } from '../api/trips';
-import { User, TripUpdate, Trip } from '../types';
+import { getTrip, updateTrip } from '../api/trips';
+import { Trip, TripUpdate } from '../types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api';
 
-const libraries: ("places")[] = ["places"];
+const libraries: ('places')[] = ['places'];
+
+const normalize = (value: string | null | undefined) => {
+  if (value === undefined || value === null) return null;
+  const trimmed = value.trim();
+  return trimmed.length ? trimmed : null;
+};
 
 export const EditTripForm = () => {
   const { id } = useParams<{ id: string }>();
@@ -20,10 +25,7 @@ export const EditTripForm = () => {
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [loadingTrip, setLoadingTrip] = useState(true);
-  const [agents, setAgents] = useState<User[]>([]);
-  const [parents, setParents] = useState<User[]>([]);
-  const [clinicians, setClinicians] = useState<User[]>([]);
-  
+
   const [pickupAutocomplete, setPickupAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const [dropoffAutocomplete, setDropoffAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
 
@@ -32,6 +34,7 @@ export const EditTripForm = () => {
     libraries,
   });
 
+  const [trip, setTrip] = useState<Trip | null>(null);
   const [formData, setFormData] = useState<TripUpdate>({
     client_name: null,
     pickup_location: null,
@@ -44,9 +47,11 @@ export const EditTripForm = () => {
     scheduled_end: null,
     flight_number: null,
     airline: null,
-    assigned_agent_id: null,
-    assigned_parent_id: null,
-    assigned_clinician_id: null,
+    agent_name: null,
+    agent_passcode: null,
+    parent_name: null,
+    parent_passcode: null,
+    clinician_passcode: null,
     clinician_name: null,
     clinician_phone: null,
     clinician_email: null,
@@ -60,21 +65,11 @@ export const EditTripForm = () => {
       return;
     }
 
-    const fetchData = async () => {
+    const fetchTrip = async () => {
       if (!token || !id) return;
-      
       try {
-        const [tripData, agentsData, parentsData, cliniciansData] = await Promise.all([
-          getTrip(token, parseInt(id)),
-          user?.role === 'admin' ? getUsersByRole(token, 'agent') : Promise.resolve([]),
-          user?.role === 'admin' ? getUsersByRole(token, 'parent') : Promise.resolve([]),
-          user?.role === 'admin' ? getUsersByRole(token, 'clinician') : Promise.resolve([]),
-        ]);
-        
-        setAgents(agentsData);
-        setParents(parentsData);
-        setClinicians(cliniciansData);
-        
+        const tripData = await getTrip(token, parseInt(id));
+        setTrip(tripData);
         setFormData({
           client_name: tripData.client_name,
           pickup_location: tripData.pickup_location,
@@ -83,13 +78,19 @@ export const EditTripForm = () => {
           pickup_lng: tripData.pickup_lng,
           dropoff_lat: tripData.dropoff_lat,
           dropoff_lng: tripData.dropoff_lng,
-          scheduled_start: tripData.scheduled_start ? new Date(tripData.scheduled_start).toISOString().slice(0, 16) : null,
-          scheduled_end: tripData.scheduled_end ? new Date(tripData.scheduled_end).toISOString().slice(0, 16) : null,
+          scheduled_start: tripData.scheduled_start
+            ? new Date(tripData.scheduled_start).toISOString().slice(0, 16)
+            : null,
+          scheduled_end: tripData.scheduled_end
+            ? new Date(tripData.scheduled_end).toISOString().slice(0, 16)
+            : null,
           flight_number: tripData.flight_number,
           airline: tripData.airline,
-          assigned_agent_id: tripData.assigned_agent_id,
-          assigned_parent_id: tripData.assigned_parent_id,
-          assigned_clinician_id: tripData.assigned_clinician_id,
+          agent_name: tripData.agent_name,
+          agent_passcode: tripData.agent_passcode ?? '',
+          parent_name: tripData.parent_name,
+          parent_passcode: tripData.parent_passcode ?? '',
+          clinician_passcode: tripData.clinician_passcode ?? '',
           clinician_name: tripData.clinician_name,
           clinician_phone: tripData.clinician_phone,
           clinician_email: tripData.clinician_email,
@@ -103,29 +104,24 @@ export const EditTripForm = () => {
       }
     };
 
-    fetchData();
-  }, [token, user, navigate, id]);
+    fetchTrip();
+  }, [token, id, navigate, user]);
 
   const onPickupLoad = (autocomplete: google.maps.places.Autocomplete) => {
     setPickupAutocomplete(autocomplete);
   };
 
   const onPickupPlaceChanged = () => {
-    if (pickupAutocomplete) {
-      const place = pickupAutocomplete.getPlace();
-      if (!place?.geometry?.location) return;
-
-      const location = place.geometry.location;
-      const lat = location.lat();
-      const lng = location.lng();
-      
-      setFormData(prev => ({
-        ...prev,
-        pickup_location: place.formatted_address || '',
-        pickup_lat: lat,
-        pickup_lng: lng,
-      }));
-    }
+    if (!pickupAutocomplete) return;
+    const place = pickupAutocomplete.getPlace();
+    if (!place?.geometry?.location) return;
+    const location = place.geometry.location;
+    setFormData((prev) => ({
+      ...prev,
+      pickup_location: place.formatted_address || prev.pickup_location,
+      pickup_lat: location.lat(),
+      pickup_lng: location.lng(),
+    }));
   };
 
   const onDropoffLoad = (autocomplete: google.maps.places.Autocomplete) => {
@@ -133,21 +129,16 @@ export const EditTripForm = () => {
   };
 
   const onDropoffPlaceChanged = () => {
-    if (dropoffAutocomplete) {
-      const place = dropoffAutocomplete.getPlace();
-      if (!place?.geometry?.location) return;
-
-      const location = place.geometry.location;
-      const lat = location.lat();
-      const lng = location.lng();
-      
-      setFormData(prev => ({
-        ...prev,
-        dropoff_location: place.formatted_address || '',
-        dropoff_lat: lat,
-        dropoff_lng: lng,
-      }));
-    }
+    if (!dropoffAutocomplete) return;
+    const place = dropoffAutocomplete.getPlace();
+    if (!place?.geometry?.location) return;
+    const location = place.geometry.location;
+    setFormData((prev) => ({
+      ...prev,
+      dropoff_location: place.formatted_address || prev.dropoff_location,
+      dropoff_lat: location.lat(),
+      dropoff_lng: location.lng(),
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -156,11 +147,36 @@ export const EditTripForm = () => {
     setLoading(true);
 
     try {
-      if (!token || !id) {
-        throw new Error('Not authenticated');
+      if (!token || !id) throw new Error('Not authenticated');
+
+      const payload: TripUpdate = {
+        ...formData,
+        agent_name: normalize(formData.agent_name),
+        parent_name: normalize(formData.parent_name),
+        clinician_name: normalize(formData.clinician_name),
+        clinician_phone: normalize(formData.clinician_phone),
+        clinician_email: normalize(formData.clinician_email),
+        additional_info: normalize(formData.additional_info),
+        flight_number: normalize(formData.flight_number),
+        airline: normalize(formData.airline),
+      };
+
+      const agentPasscode = normalize(formData.agent_passcode);
+      if (agentPasscode !== null) {
+        payload.agent_passcode = agentPasscode;
       }
 
-      await updateTrip(token, parseInt(id), formData);
+      const parentPasscode = normalize(formData.parent_passcode);
+      if (parentPasscode !== null) {
+        payload.parent_passcode = parentPasscode;
+      }
+
+      const clinicianPasscode = normalize(formData.clinician_passcode);
+      if (clinicianPasscode !== null) {
+        payload.clinician_passcode = clinicianPasscode;
+      }
+
+      await updateTrip(token, parseInt(id), payload);
       navigate(`/trips/${id}`);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to update trip');
@@ -173,7 +189,7 @@ export const EditTripForm = () => {
     return null;
   }
 
-  if (loadingTrip) {
+  if (loadingTrip || !trip) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-8">
         <p>Loading trip data...</p>
@@ -195,7 +211,7 @@ export const EditTripForm = () => {
             </Alert>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-5">
             <div>
               <Label htmlFor="client_name">Client Name *</Label>
               <Input
@@ -209,10 +225,7 @@ export const EditTripForm = () => {
             <div>
               <Label htmlFor="pickup_location">Pickup Location *</Label>
               {isLoaded ? (
-                <Autocomplete
-                  onLoad={onPickupLoad}
-                  onPlaceChanged={onPickupPlaceChanged}
-                >
+                <Autocomplete onLoad={onPickupLoad} onPlaceChanged={onPickupPlaceChanged}>
                   <Input
                     id="pickup_location"
                     value={formData.pickup_location || ''}
@@ -235,10 +248,7 @@ export const EditTripForm = () => {
             <div>
               <Label htmlFor="dropoff_location">Dropoff Location *</Label>
               {isLoaded ? (
-                <Autocomplete
-                  onLoad={onDropoffLoad}
-                  onPlaceChanged={onDropoffPlaceChanged}
-                >
+                <Autocomplete onLoad={onDropoffLoad} onPlaceChanged={onDropoffPlaceChanged}>
                   <Input
                     id="dropoff_location"
                     value={formData.dropoff_location || ''}
@@ -269,14 +279,13 @@ export const EditTripForm = () => {
                   required
                 />
               </div>
-
               <div>
                 <Label htmlFor="scheduled_end">Scheduled End</Label>
                 <Input
                   id="scheduled_end"
                   type="datetime-local"
                   value={formData.scheduled_end || ''}
-                  onChange={(e) => setFormData({ ...formData, scheduled_end: e.target.value || null })}
+                  onChange={(e) => setFormData({ ...formData, scheduled_end: e.target.value ? e.target.value : null })}
                 />
               </div>
             </div>
@@ -287,143 +296,119 @@ export const EditTripForm = () => {
                 <Input
                   id="flight_number"
                   value={formData.flight_number || ''}
-                  onChange={(e) => setFormData({ ...formData, flight_number: e.target.value || null })}
+                  onChange={(e) => setFormData({ ...formData, flight_number: e.target.value })}
                   placeholder="e.g., UA1234"
                 />
               </div>
-
               <div>
                 <Label htmlFor="airline">Airline</Label>
                 <Input
                   id="airline"
                   value={formData.airline || ''}
-                  onChange={(e) => setFormData({ ...formData, airline: e.target.value || null })}
+                  onChange={(e) => setFormData({ ...formData, airline: e.target.value })}
                   placeholder="e.g., United Airlines"
                 />
               </div>
             </div>
 
-            {user?.role === 'admin' && (
-              <>
+            <div className="border rounded-lg p-4 space-y-4 bg-gray-50">
+              <p className="text-sm font-semibold text-gray-700">Role Access & Passcodes</p>
+              <p className="text-xs text-gray-500">
+                Update the display name and passcode for each role. Leave passcode blank to keep the existing one.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="assigned_agent_id">Assign Agent</Label>
-                  <Select
-                    value={formData.assigned_agent_id?.toString() || ''}
-                    onValueChange={(value) => setFormData({ ...formData, assigned_agent_id: value ? parseInt(value) : null })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select an agent" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {agents.map((agent) => (
-                        <SelectItem key={agent.id} value={agent.id.toString()}>
-                          {agent.first_name} {agent.last_name} ({agent.email})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="agent_name">Agent Name</Label>
+                  <Input
+                    id="agent_name"
+                    value={formData.agent_name || ''}
+                    onChange={(e) => setFormData({ ...formData, agent_name: e.target.value })}
+                    placeholder="Transport Agent"
+                  />
                 </div>
+                <div>
+                  <Label htmlFor="agent_passcode">Agent Passcode</Label>
+                  <Input
+                    id="agent_passcode"
+                    value={formData.agent_passcode || ''}
+                    onChange={(e) => setFormData({ ...formData, agent_passcode: e.target.value })}
+                    placeholder="Leave blank to keep current"
+                  />
+                </div>
+              </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="assigned_parent_id">Assign Parent/Guardian</Label>
-                  <Select
-                    value={formData.assigned_parent_id?.toString() || ''}
-                    onValueChange={(value) => setFormData({ ...formData, assigned_parent_id: value ? parseInt(value) : null })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a parent/guardian" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {parents.map((parent) => (
-                        <SelectItem key={parent.id} value={parent.id.toString()}>
-                          {parent.first_name} {parent.last_name} ({parent.email})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="parent_name">Parent/Guardian Name</Label>
+                  <Input
+                    id="parent_name"
+                    value={formData.parent_name || ''}
+                    onChange={(e) => setFormData({ ...formData, parent_name: e.target.value })}
+                    placeholder="Jane Smith"
+                  />
                 </div>
+                <div>
+                  <Label htmlFor="parent_passcode">Parent/Guardian Passcode</Label>
+                  <Input
+                    id="parent_passcode"
+                    value={formData.parent_passcode || ''}
+                    onChange={(e) => setFormData({ ...formData, parent_passcode: e.target.value })}
+                    placeholder="Leave blank to keep current"
+                  />
+                </div>
+              </div>
 
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="assigned_clinician_id">Assign Clinician (Optional)</Label>
-                  <Select
-                    value={formData.assigned_clinician_id?.toString() || ''}
-                    onValueChange={(value) => setFormData({ ...formData, assigned_clinician_id: value ? parseInt(value) : null })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select a clinician" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {clinicians.map((clinician) => (
-                        <SelectItem key={clinician.id} value={clinician.id.toString()}>
-                          {clinician.first_name} {clinician.last_name} ({clinician.email})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="clinician_name">Provider/Clinician Name</Label>
+                  <Input
+                    id="clinician_name"
+                    value={formData.clinician_name || ''}
+                    onChange={(e) => setFormData({ ...formData, clinician_name: e.target.value })}
+                    placeholder="Dr. Taylor"
+                  />
                 </div>
-              </>
-            )}
+                <div>
+                  <Label htmlFor="clinician_passcode">Provider/Clinician Passcode</Label>
+                  <Input
+                    id="clinician_passcode"
+                    value={formData.clinician_passcode || ''}
+                    onChange={(e) => setFormData({ ...formData, clinician_passcode: e.target.value })}
+                    placeholder="Leave blank to keep current"
+                  />
+                </div>
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <Label htmlFor="clinician_name">Clinician Name</Label>
-                <Input
-                  id="clinician_name"
-                  value={formData.clinician_name || ''}
-                  onChange={(e) => setFormData({ ...formData, clinician_name: e.target.value || null })}
-                  placeholder="Dr. Smith"
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="clinician_phone">Clinician Phone</Label>
+                <Label htmlFor="clinician_phone">Provider Phone</Label>
                 <Input
                   id="clinician_phone"
                   value={formData.clinician_phone || ''}
-                  onChange={(e) => setFormData({ ...formData, clinician_phone: e.target.value || null })}
+                  onChange={(e) => setFormData({ ...formData, clinician_phone: e.target.value })}
                   placeholder="(555) 123-4567"
                 />
               </div>
-
               <div>
-                <Label htmlFor="clinician_email">Clinician Email</Label>
+                <Label htmlFor="clinician_email">Provider Email</Label>
                 <Input
                   id="clinician_email"
                   type="email"
                   value={formData.clinician_email || ''}
-                  onChange={(e) => setFormData({ ...formData, clinician_email: e.target.value || null })}
-                  placeholder="doctor@clinic.com"
+                  onChange={(e) => setFormData({ ...formData, clinician_email: e.target.value })}
+                  placeholder="provider@email.com"
                 />
               </div>
-            </div>
-
-            <div>
-              <Label htmlFor="additional_info">Additional Information</Label>
-              <textarea
-                id="additional_info"
-                className="w-full min-h-[100px] px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                value={formData.additional_info || ''}
-                onChange={(e) => setFormData({ ...formData, additional_info: e.target.value || null })}
-                placeholder="Any additional notes or special instructions..."
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="status">Status</Label>
-              <Select
-                value={formData.status || ''}
-                onValueChange={(value) => setFormData({ ...formData, status: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="scheduled">Scheduled</SelectItem>
-                  <SelectItem value="in_progress">In Progress</SelectItem>
-                  <SelectItem value="completed">Completed</SelectItem>
-                  <SelectItem value="cancelled">Cancelled</SelectItem>
-                </SelectContent>
-              </Select>
+              <div>
+                <Label htmlFor="additional_info">Additional Info</Label>
+                <Input
+                  id="additional_info"
+                  value={formData.additional_info || ''}
+                  onChange={(e) => setFormData({ ...formData, additional_info: e.target.value })}
+                  placeholder="Notes or special instructions"
+                />
+              </div>
             </div>
 
             <div className="flex gap-4 pt-4">

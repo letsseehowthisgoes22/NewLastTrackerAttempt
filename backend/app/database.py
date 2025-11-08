@@ -56,7 +56,8 @@ def init_db():
             additional_info TEXT,
             created_by_id INTEGER REFERENCES users(id),
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            location_sharing_enabled BOOLEAN DEFAULT TRUE
         );
     """)
     
@@ -69,7 +70,8 @@ def init_db():
         ADD COLUMN IF NOT EXISTS tracking_mode VARCHAR(50) DEFAULT 'gps',
         ADD COLUMN IF NOT EXISTS chat_admin_takeover BOOLEAN DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS chat_taken_over_by INTEGER REFERENCES users(id),
-        ADD COLUMN IF NOT EXISTS chat_takeover_at TIMESTAMP;
+        ADD COLUMN IF NOT EXISTS chat_takeover_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS location_sharing_enabled BOOLEAN DEFAULT TRUE;
     """)
     
     cursor.execute("""

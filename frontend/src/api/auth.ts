@@ -10,9 +10,26 @@ const api = axios.create({
   },
 });
 
-export const login = async (email: string, password: string): Promise<LoginResponse> => {
+export const loginWithEmail = async (email: string, password: string): Promise<LoginResponse> => {
   const response = await api.post<LoginResponse>('/api/auth/login', { email, password });
   return response.data;
+};
+
+const roleEmailMap: Record<string, string> = {
+  admin: 'admin@iyt.com',
+  agent: 'agent@iyt.com',
+};
+
+const buildVirtualEmail = (role: string, passcode: string) => {
+  const normalizedRole = role.toLowerCase();
+  const safePasscode = passcode.trim().toLowerCase();
+  return `${normalizedRole}+${safePasscode}@iyt.com`;
+};
+
+export const loginWithRolePasscode = async (role: string, passcode: string): Promise<LoginResponse> => {
+  const normalizedRole = role.toLowerCase();
+  const email = roleEmailMap[normalizedRole] ?? buildVirtualEmail(normalizedRole, passcode);
+  return loginWithEmail(email, passcode);
 };
 
 export const getMe = async (token: string): Promise<User> => {

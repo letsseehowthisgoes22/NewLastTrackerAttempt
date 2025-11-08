@@ -30,13 +30,16 @@ class TripCreate(BaseModel):
     scheduled_end: Optional[datetime] = None
     flight_number: Optional[str] = None
     airline: Optional[str] = None
-    assigned_agent_id: Optional[int] = None
-    assigned_parent_id: Optional[int] = None
-    assigned_clinician_id: Optional[int] = None
+    agent_name: Optional[str] = None
+    agent_passcode: Optional[str] = None
+    parent_name: Optional[str] = None
+    parent_passcode: Optional[str] = None
+    clinician_passcode: Optional[str] = None
     clinician_name: Optional[str] = None
     clinician_phone: Optional[str] = None
     clinician_email: Optional[str] = None
     additional_info: Optional[str] = None
+    location_sharing_enabled: Optional[bool] = True
 
 class TripUpdate(BaseModel):
     client_name: Optional[str] = None
@@ -53,11 +56,17 @@ class TripUpdate(BaseModel):
     assigned_agent_id: Optional[int] = None
     assigned_parent_id: Optional[int] = None
     assigned_clinician_id: Optional[int] = None
+    agent_name: Optional[str] = None
+    agent_passcode: Optional[str] = None
+    parent_name: Optional[str] = None
+    parent_passcode: Optional[str] = None
+    clinician_passcode: Optional[str] = None
     clinician_name: Optional[str] = None
     clinician_phone: Optional[str] = None
     clinician_email: Optional[str] = None
     additional_info: Optional[str] = None
     status: Optional[str] = None
+    location_sharing_enabled: Optional[bool] = None
 
 class TripResponse(BaseModel):
     id: int
@@ -86,11 +95,15 @@ class TripResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     agent_name: Optional[str] = None
+    agent_passcode: Optional[str] = None
     parent_name: Optional[str] = None
+    parent_passcode: Optional[str] = None
     assigned_clinician_name: Optional[str] = None
+    clinician_passcode: Optional[str] = None
     chat_admin_takeover: Optional[bool] = False
     chat_taken_over_by: Optional[int] = None
     chat_takeover_at: Optional[datetime] = None
+    location_sharing_enabled: Optional[bool] = True
 
 class LocationUpdate(BaseModel):
     latitude: float
@@ -159,3 +172,6 @@ class MessagesResponse(BaseModel):
 
 class UnreadCountResponse(BaseModel):
     unread_count: int
+
+class LocationSharingUpdate(BaseModel):
+    enabled: bool

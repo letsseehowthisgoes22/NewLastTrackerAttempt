@@ -15,7 +15,8 @@ from app.models import (
     TripCreate, TripUpdate, TripResponse, 
     DocumentResponse, MessageResponse,
     LocationUpdate, LocationUpdateResponse,
-    MessageCreate, MessageResponseItem, MessagesResponse, UnreadCountResponse
+    MessageCreate, MessageResponseItem, MessagesResponse, UnreadCountResponse,
+    LocationSharingUpdate
 )
 from app.websocket import sio, broadcast_location_update
 from app.flight_tracking import fetch_flight_status
@@ -40,6 +41,64 @@ socket_app = socketio.ASGIApp(sio, other_asgi_app=app, socketio_path='socket.io'
 UPLOAD_DIR = Path("./uploads")
 ALLOWED_EXTENSIONS = {'.pdf', '.jpg', '.jpeg', '.png', '.docx', '.doc'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB in bytes
+
+def _split_name(full_name: Optional[str]):
+    if not full_name:
+        return (None, None)
+    parts = full_name.strip().split(" ", 1)
+    first = parts[0]
+    last = parts[1] if len(parts) > 1 else None
+    return first, last
+
+def _virtual_email(role: str, passcode: str) -> str:
+    safe_code = passcode.strip().lower()
+    return f"{role.lower()}+{safe_code}@iyt.com"
+
+def ensure_role_user(cursor, role: str, name: Optional[str], passcode: Optional[str]):
+    if not passcode:
+        return None
+    email = _virtual_email(role, passcode)
+    first_name, last_name = _split_name(name or role.title())
+    cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+    existing = cursor.fetchone()
+    if existing:
+        cursor.execute(
+            "UPDATE users SET password = %s, role = %s, first_name = %s, last_name = %s WHERE id = %s",
+            (passcode, role, first_name, last_name, existing["id"])
+        )
+        return existing["id"]
+    cursor.execute(
+        """
+        INSERT INTO users (email, password, role, first_name, last_name)
+        VALUES (%s, %s, %s, %s, %s)
+        RETURNING id
+        """,
+        (email, passcode, role, first_name, last_name)
+    )
+    new_user = cursor.fetchone()
+    return new_user["id"]
+
+def update_user_name(cursor, user_id: Optional[int], name: Optional[str]):
+    if not user_id or not name:
+        return
+    first_name, last_name = _split_name(name)
+    cursor.execute(
+        "UPDATE users SET first_name = %s, last_name = %s WHERE id = %s",
+        (first_name, last_name, user_id)
+    )
+
+def get_user_full_name(cursor, user_id: Optional[int]) -> Optional[str]:
+    if not user_id:
+        return None
+    cursor.execute(
+        "SELECT first_name, last_name FROM users WHERE id = %s",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+    parts = [part for part in [row.get("first_name"), row.get("last_name")] if part]
+    return " ".join(parts) if parts else None
 
 @app.on_event("startup")
 async def startup_event():
@@ -143,6 +202,29 @@ async def create_trip(trip_data: TripCreate, current_user: dict = Depends(get_cu
     conn = get_db_connection()
     cursor = conn.cursor()
     
+    agent_id = None
+    if trip_data.agent_passcode:
+        agent_id = ensure_role_user(cursor, "agent", trip_data.agent_name, trip_data.agent_passcode)
+    elif trip_data.agent_name:
+        agent_id = ensure_role_user(cursor, "agent", trip_data.agent_name, trip_data.agent_passcode or "")
+
+    parent_id = None
+    if trip_data.parent_passcode:
+        parent_id = ensure_role_user(cursor, "parent", trip_data.parent_name, trip_data.parent_passcode)
+    elif trip_data.parent_name:
+        parent_id = ensure_role_user(cursor, "parent", trip_data.parent_name, trip_data.parent_passcode or "")
+
+    clinician_id = None
+    if trip_data.clinician_passcode:
+        clinician_id = ensure_role_user(cursor, "clinician", trip_data.clinician_name, trip_data.clinician_passcode)
+    elif trip_data.clinician_name:
+        clinician_id = ensure_role_user(cursor, "clinician", trip_data.clinician_name, trip_data.clinician_passcode or "")
+    
+    sharing_enabled = trip_data.location_sharing_enabled if trip_data.location_sharing_enabled is not None else True
+
+    flight_number = trip_data.flight_number.strip().upper() if trip_data.flight_number else None
+    airline = trip_data.airline.strip() if trip_data.airline else None
+
     query = """
         INSERT INTO trips (
             client_name, pickup_location, dropoff_location,
@@ -150,8 +232,8 @@ async def create_trip(trip_data: TripCreate, current_user: dict = Depends(get_cu
             scheduled_start, scheduled_end, flight_number, airline,
             assigned_agent_id, assigned_parent_id, assigned_clinician_id,
             clinician_name, clinician_phone, clinician_email, additional_info,
-            created_by_id, status
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            created_by_id, status, location_sharing_enabled
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
     """
     
@@ -165,17 +247,18 @@ async def create_trip(trip_data: TripCreate, current_user: dict = Depends(get_cu
         trip_data.dropoff_lng,
         trip_data.scheduled_start,
         trip_data.scheduled_end,
-        trip_data.flight_number,
-        trip_data.airline,
-        trip_data.assigned_agent_id,
-        trip_data.assigned_parent_id,
-        trip_data.assigned_clinician_id,
+        flight_number,
+        airline,
+        agent_id,
+        parent_id,
+        clinician_id,
         trip_data.clinician_name,
         trip_data.clinician_phone,
         trip_data.clinician_email,
         trip_data.additional_info,
         current_user["id"],
-        "scheduled"
+        "scheduled",
+        sharing_enabled
     ))
     
     new_trip = cursor.fetchone()
@@ -184,8 +267,11 @@ async def create_trip(trip_data: TripCreate, current_user: dict = Depends(get_cu
     query_with_names = """
         SELECT t.*, 
                ua.first_name || ' ' || ua.last_name as agent_name,
+               ua.password as agent_passcode,
                up.first_name || ' ' || up.last_name as parent_name,
-               uc.first_name || ' ' || uc.last_name as assigned_clinician_name
+               up.password as parent_passcode,
+               uc.first_name || ' ' || uc.last_name as assigned_clinician_name,
+               uc.password as clinician_passcode
         FROM trips t
         LEFT JOIN users ua ON t.assigned_agent_id = ua.id
         LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -194,6 +280,11 @@ async def create_trip(trip_data: TripCreate, current_user: dict = Depends(get_cu
     """
     cursor.execute(query_with_names, (new_trip["id"],))
     trip_with_names = cursor.fetchone()
+    
+    if current_user["role"] != "admin":
+        trip_with_names["agent_passcode"] = None
+        trip_with_names["parent_passcode"] = None
+        trip_with_names["clinician_passcode"] = None
     
     cursor.close()
     conn.close()
@@ -213,8 +304,11 @@ async def get_trips(current_user: dict = Depends(get_current_user)):
         query = """
             SELECT t.*, 
                    ua.first_name || ' ' || ua.last_name as agent_name,
+                   ua.password as agent_passcode,
                    up.first_name || ' ' || up.last_name as parent_name,
-                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name
+                   up.password as parent_passcode,
+                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name,
+                   uc.password as clinician_passcode
             FROM trips t
             LEFT JOIN users ua ON t.assigned_agent_id = ua.id
             LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -226,8 +320,11 @@ async def get_trips(current_user: dict = Depends(get_current_user)):
         query = """
             SELECT t.*, 
                    ua.first_name || ' ' || ua.last_name as agent_name,
+                   ua.password as agent_passcode,
                    up.first_name || ' ' || up.last_name as parent_name,
-                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name
+                   up.password as parent_passcode,
+                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name,
+                   uc.password as clinician_passcode
             FROM trips t
             LEFT JOIN users ua ON t.assigned_agent_id = ua.id
             LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -240,8 +337,11 @@ async def get_trips(current_user: dict = Depends(get_current_user)):
         query = """
             SELECT t.*, 
                    ua.first_name || ' ' || ua.last_name as agent_name,
+                   ua.password as agent_passcode,
                    up.first_name || ' ' || up.last_name as parent_name,
-                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name
+                   up.password as parent_passcode,
+                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name,
+                   uc.password as clinician_passcode
             FROM trips t
             LEFT JOIN users ua ON t.assigned_agent_id = ua.id
             LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -254,8 +354,11 @@ async def get_trips(current_user: dict = Depends(get_current_user)):
         query = """
             SELECT t.*, 
                    ua.first_name || ' ' || ua.last_name as agent_name,
+                   ua.password as agent_passcode,
                    up.first_name || ' ' || up.last_name as parent_name,
-                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name
+                   up.password as parent_passcode,
+                   uc.first_name || ' ' || uc.last_name as assigned_clinician_name,
+                   uc.password as clinician_passcode
             FROM trips t
             LEFT JOIN users ua ON t.assigned_agent_id = ua.id
             LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -276,7 +379,15 @@ async def get_trips(current_user: dict = Depends(get_current_user)):
     cursor.close()
     conn.close()
     
-    return [TripResponse(**trip) for trip in trips]
+    responses = []
+    for trip in trips:
+        if current_user["role"] != "admin":
+            trip["agent_passcode"] = None
+            trip["parent_passcode"] = None
+            trip["clinician_passcode"] = None
+        responses.append(TripResponse(**trip))
+    
+    return responses
 
 @app.get("/api/trips/{trip_id}", response_model=TripResponse)
 async def get_trip(trip_id: int, current_user: dict = Depends(get_current_user)):
@@ -287,8 +398,11 @@ async def get_trip(trip_id: int, current_user: dict = Depends(get_current_user))
     query = """
         SELECT t.*, 
                ua.first_name || ' ' || ua.last_name as agent_name,
+               ua.password as agent_passcode,
                up.first_name || ' ' || up.last_name as parent_name,
-               uc.first_name || ' ' || uc.last_name as assigned_clinician_name
+               up.password as parent_passcode,
+               uc.first_name || ' ' || uc.last_name as assigned_clinician_name,
+               uc.password as clinician_passcode
         FROM trips t
         LEFT JOIN users ua ON t.assigned_agent_id = ua.id
         LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -318,6 +432,10 @@ async def get_trip(trip_id: int, current_user: dict = Depends(get_current_user))
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied"
             )
+    if current_user["role"] != "admin":
+        trip["agent_passcode"] = None
+        trip["parent_passcode"] = None
+        trip["clinician_passcode"] = None
     
     return TripResponse(**trip)
 
@@ -344,6 +462,63 @@ async def update_trip(trip_id: int, trip_data: TripUpdate, current_user: dict = 
             detail="Trip not found"
         )
     
+    existing_agent_id = existing_trip.get("assigned_agent_id")
+    existing_parent_id = existing_trip.get("assigned_parent_id")
+    existing_clinician_id = existing_trip.get("assigned_clinician_id")
+
+    existing_agent_name = get_user_full_name(cursor, existing_agent_id)
+    existing_parent_name = get_user_full_name(cursor, existing_parent_id)
+    existing_clinician_name = get_user_full_name(cursor, existing_clinician_id)
+
+    effective_agent_id = existing_agent_id
+    effective_parent_id = existing_parent_id
+    effective_clinician_id = existing_clinician_id
+
+    if trip_data.agent_passcode is not None:
+        cleaned_passcode = trip_data.agent_passcode.strip() if isinstance(trip_data.agent_passcode, str) else trip_data.agent_passcode
+        if cleaned_passcode:
+            effective_agent_id = ensure_role_user(
+                cursor,
+                "agent",
+                trip_data.agent_name or existing_agent_name,
+                cleaned_passcode
+            )
+        else:
+            cleaned_passcode = None
+        trip_data.agent_passcode = cleaned_passcode
+    elif trip_data.agent_name is not None and effective_agent_id:
+        update_user_name(cursor, effective_agent_id, trip_data.agent_name)
+
+    if trip_data.parent_passcode is not None:
+        cleaned_passcode = trip_data.parent_passcode.strip() if isinstance(trip_data.parent_passcode, str) else trip_data.parent_passcode
+        if cleaned_passcode:
+            effective_parent_id = ensure_role_user(
+                cursor,
+                "parent",
+                trip_data.parent_name or existing_parent_name,
+                cleaned_passcode
+            )
+        else:
+            cleaned_passcode = None
+        trip_data.parent_passcode = cleaned_passcode
+    elif trip_data.parent_name is not None and effective_parent_id:
+        update_user_name(cursor, effective_parent_id, trip_data.parent_name)
+
+    if trip_data.clinician_passcode is not None:
+        cleaned_passcode = trip_data.clinician_passcode.strip() if isinstance(trip_data.clinician_passcode, str) else trip_data.clinician_passcode
+        if cleaned_passcode:
+            effective_clinician_id = ensure_role_user(
+                cursor,
+                "clinician",
+                trip_data.clinician_name or existing_clinician_name,
+                cleaned_passcode
+            )
+        else:
+            cleaned_passcode = None
+        trip_data.clinician_passcode = cleaned_passcode
+    elif trip_data.clinician_name is not None and effective_clinician_id:
+        update_user_name(cursor, effective_clinician_id, trip_data.clinician_name)
+
     update_fields = []
     update_values = []
     
@@ -375,20 +550,22 @@ async def update_trip(trip_id: int, trip_data: TripUpdate, current_user: dict = 
         update_fields.append("scheduled_end = %s")
         update_values.append(trip_data.scheduled_end)
     if trip_data.flight_number is not None:
+        sanitized_flight = trip_data.flight_number.strip().upper() if trip_data.flight_number else None
         update_fields.append("flight_number = %s")
-        update_values.append(trip_data.flight_number)
+        update_values.append(sanitized_flight)
     if trip_data.airline is not None:
+        sanitized_airline = trip_data.airline.strip() if trip_data.airline else None
         update_fields.append("airline = %s")
-        update_values.append(trip_data.airline)
-    if trip_data.assigned_agent_id is not None:
+        update_values.append(sanitized_airline)
+    if effective_agent_id != existing_agent_id:
         update_fields.append("assigned_agent_id = %s")
-        update_values.append(trip_data.assigned_agent_id)
-    if trip_data.assigned_parent_id is not None:
+        update_values.append(effective_agent_id)
+    if effective_parent_id != existing_parent_id:
         update_fields.append("assigned_parent_id = %s")
-        update_values.append(trip_data.assigned_parent_id)
-    if trip_data.assigned_clinician_id is not None:
+        update_values.append(effective_parent_id)
+    if effective_clinician_id != existing_clinician_id:
         update_fields.append("assigned_clinician_id = %s")
-        update_values.append(trip_data.assigned_clinician_id)
+        update_values.append(effective_clinician_id)
     if trip_data.clinician_name is not None:
         update_fields.append("clinician_name = %s")
         update_values.append(trip_data.clinician_name)
@@ -404,6 +581,9 @@ async def update_trip(trip_id: int, trip_data: TripUpdate, current_user: dict = 
     if trip_data.status is not None:
         update_fields.append("status = %s")
         update_values.append(trip_data.status)
+    if trip_data.location_sharing_enabled is not None:
+        update_fields.append("location_sharing_enabled = %s")
+        update_values.append(trip_data.location_sharing_enabled)
     
     update_fields.append("updated_at = CURRENT_TIMESTAMP")
     
@@ -416,8 +596,11 @@ async def update_trip(trip_id: int, trip_data: TripUpdate, current_user: dict = 
     query_with_names = """
         SELECT t.*, 
                ua.first_name || ' ' || ua.last_name as agent_name,
+               ua.password as agent_passcode,
                up.first_name || ' ' || up.last_name as parent_name,
-               uc.first_name || ' ' || uc.last_name as assigned_clinician_name
+               up.password as parent_passcode,
+               uc.first_name || ' ' || uc.last_name as assigned_clinician_name,
+               uc.password as clinician_passcode
         FROM trips t
         LEFT JOIN users ua ON t.assigned_agent_id = ua.id
         LEFT JOIN users up ON t.assigned_parent_id = up.id
@@ -427,10 +610,77 @@ async def update_trip(trip_id: int, trip_data: TripUpdate, current_user: dict = 
     cursor.execute(query_with_names, (trip_id,))
     updated_trip = cursor.fetchone()
     
+    if current_user["role"] != "admin":
+        updated_trip["agent_passcode"] = None
+        updated_trip["parent_passcode"] = None
+        updated_trip["clinician_passcode"] = None
+    
     cursor.close()
     conn.close()
     
     return TripResponse(**updated_trip)
+
+@app.post("/api/trips/{trip_id}/location-sharing")
+async def update_location_sharing(
+    trip_id: int,
+    payload: LocationSharingUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Enable or disable location sharing for a trip (admin or assigned agent)."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT assigned_agent_id FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+
+    if current_user["role"] == "admin":
+        authorized = True
+    elif current_user["role"] == "agent" and trip["assigned_agent_id"] == current_user["id"]:
+        authorized = True
+    else:
+        authorized = False
+
+    if not authorized:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to change location sharing status"
+        )
+
+    cursor.execute(
+        """
+        UPDATE trips
+        SET location_sharing_enabled = %s,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+        """,
+        (payload.enabled, trip_id)
+    )
+    conn.commit()
+
+    cursor.close()
+    conn.close()
+
+    await sio.emit(
+        'location_sharing_status',
+        {
+            "trip_id": trip_id,
+            "enabled": payload.enabled,
+            "changed_by": current_user["role"]
+        },
+        room=f"trip_{trip_id}"
+    )
+
+    return {"success": True, "location_sharing_enabled": payload.enabled}
 
 @app.delete("/api/trips/{trip_id}")
 async def delete_trip(trip_id: int, current_user: dict = Depends(get_current_user)):
@@ -454,7 +704,7 @@ async def delete_trip(trip_id: int, current_user: dict = Depends(get_current_use
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Trip not found"
         )
-    
+
     cursor.execute("DELETE FROM trips WHERE id = %s", (trip_id,))
     conn.commit()
     
@@ -505,7 +755,7 @@ async def get_trip_documents(trip_id: int, current_user: dict = Depends(get_curr
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Trip not found"
         )
-    
+
     user_id = current_user["id"]
     user_role = current_user["role"]
     
@@ -795,6 +1045,14 @@ async def post_location(trip_id: int, location_data: LocationUpdate, current_use
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the assigned agent can post location updates"
         )
+
+    if "location_sharing_enabled" in trip.keys() and trip["location_sharing_enabled"] is False:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Location sharing is currently disabled for this trip."
+        )
     
     # Validate coordinates
     if not (-90 <= location_data.latitude <= 90):
@@ -883,6 +1141,14 @@ async def get_latest_location(trip_id: int, current_user: dict = Depends(get_cur
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied"
             )
+
+    if "location_sharing_enabled" in trip.keys() and trip["location_sharing_enabled"] is False:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Location sharing is currently disabled for this trip."
+        )
     
     # Get latest location
     cursor.execute("""
@@ -945,6 +1211,14 @@ async def get_location_history(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied"
             )
+
+    if "location_sharing_enabled" in trip.keys() and trip["location_sharing_enabled"] is False:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Location sharing is currently disabled for this trip."
+        )
     
     # Get location history
     cursor.execute("""
