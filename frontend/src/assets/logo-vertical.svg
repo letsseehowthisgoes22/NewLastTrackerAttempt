@@ -1,0 +1,28 @@
+<svg width="512" height="640" viewBox="0 0 512 640" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="logoTitle logoDesc">
+  <title id="logoTitle">Interactive Youth Transport stacked logo</title>
+  <desc id="logoDesc">Hexagon outline with a roadway graphic and the text Interactive Youth Transport below it.</desc>
+  <defs>
+    <linearGradient id="hexGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#122c60"/>
+      <stop offset="50%" stop-color="#1c5c74"/>
+      <stop offset="100%" stop-color="#4cb379"/>
+    </linearGradient>
+    <linearGradient id="roadGradient" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0e274f"/>
+      <stop offset="40%" stop-color="#123760"/>
+      <stop offset="100%" stop-color="#43aa71"/>
+    </linearGradient>
+    <style>
+      .logo-text { font-family: 'Montserrat', 'Helvetica Neue', Arial, sans-serif; font-weight: 700; text-anchor: middle; }
+      .logo-subtext { font-family: 'Montserrat', 'Helvetica Neue', Arial, sans-serif; font-weight: 600; text-anchor: middle; letter-spacing: 0.04em; }
+    </style>
+  </defs>
+  <g transform="translate(256 208)">
+    <polygon points="0,-180 156,-90 156,90 0,180 -156,90 -156,-90" fill="none" stroke="url(#hexGradient)" stroke-width="36" stroke-linejoin="round"/>
+    <path d="M-118 72 C-80 12 -32 -48 30 -104 C62 -132 102 -154 140 -126 C94 -70 57 -22 18 32 C-14 78 -48 126 -84 168 L-142 136 C-122 110 -100 92 -78 62 Z" fill="url(#roadGradient)"/>
+    <path d="M-28 160 C14 62 76 -18 152 -80 L152 -32 C92 16 50 74 24 132 Z" fill="#ffffff"/>
+  </g>
+  <text class="logo-text" x="256" y="470" font-size="72" fill="#1a1a1a">Interactive</text>
+  <text class="logo-subtext" x="256" y="536" font-size="48" fill="#1a1a1a">Youth Transport</text>
+</svg>
+

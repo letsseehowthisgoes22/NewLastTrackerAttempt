@@ -17,7 +17,6 @@ export const loginWithEmail = async (email: string, password: string): Promise<L
 
 const roleEmailMap: Record<string, string> = {
   admin: 'admin@iyt.com',
-  agent: 'agent@iyt.com',
 };
 
 const buildVirtualEmail = (role: string, passcode: string) => {
@@ -28,8 +27,14 @@ const buildVirtualEmail = (role: string, passcode: string) => {
 
 export const loginWithRolePasscode = async (role: string, passcode: string): Promise<LoginResponse> => {
   const normalizedRole = role.toLowerCase();
-  const email = roleEmailMap[normalizedRole] ?? buildVirtualEmail(normalizedRole, passcode);
-  return loginWithEmail(email, passcode);
+  const safePasscode = passcode.trim();
+
+  if (!safePasscode) {
+    throw new Error('Passcode is required');
+  }
+
+  const email = roleEmailMap[normalizedRole] ?? buildVirtualEmail(normalizedRole, safePasscode);
+  return loginWithEmail(email, safePasscode);
 };
 
 export const getMe = async (token: string): Promise<User> => {
