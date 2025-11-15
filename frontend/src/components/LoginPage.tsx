@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardDescription, CardHeader, } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -28,17 +28,21 @@ export const LoginPage = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">
-            IYT Transport Tracker
-          </CardTitle>
-          <CardDescription className="text-center">
-            Sign in to your account
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-800 px-4">
+      <Card className="w-full max-w-md shadow-2xl border-0">
+        <CardHeader className="space-y-4 pt-8">
+          <div className="flex justify-center">
+            <img
+              src="/logo-stacked2.png"
+              alt="IYT Compass"
+              className="h-40 w-auto"
+            />
+          </div>
+          <CardDescription className="text-center text-slate-600 text-base">
+            Sign in to access the portal
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pb-8">
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <Alert variant="destructive">
@@ -47,7 +51,7 @@ export const LoginPage = () => {
             )}
             
             <div className="space-y-2">
-              <label htmlFor="role" className="text-sm font-medium">
+              <label htmlFor="role" className="text-sm font-medium text-slate-700">
                 Role
               </label>
               <Select value={role} onValueChange={setRole} disabled={isLoading}>
@@ -64,12 +68,12 @@ export const LoginPage = () => {
             </div>
 
             <div className="space-y-2">
-              <label htmlFor="passcode" className="text-sm font-medium">
+              <label htmlFor="passcode" className="text-sm font-medium text-slate-700">
                 Passcode
               </label>
               <Input
                 id="passcode"
-                type="text"
+                type="password"
                 placeholder="Enter passcode"
                 value={passcode}
                 onChange={(e) => setPasscode(e.target.value)}
@@ -78,13 +82,13 @@ export const LoginPage = () => {
               />
             </div>
 
-            <Button type="submit" className="w-full" disabled={isLoading}>
+            <Button type="submit" className="w-full mt-6" disabled={isLoading}>
               {isLoading ? 'Signing in...' : 'Sign In'}
             </Button>
           </form>
 
-          <div className="mt-6 text-sm text-gray-600">
-            <p className="font-semibold mb-2">How it works:</p>
+          <div className="mt-6 text-sm text-slate-500 border-t pt-4">
+            <p className="font-semibold mb-2 text-slate-600">How it works:</p>
             <ul className="space-y-1 text-xs">
               <li>Choose your role, enter the passcode provided by the administrator.</li>
               <li>Admins/agents can reuse shared passcodes and rotate them as needed.</li>
