@@ -86,24 +86,25 @@ interface TripMapProps {
   onSharingStatusChange?: (enabled: boolean) => void;
 }
 
-function FitBounds({ pickupLat, pickupLng, dropoffLat, dropoffLng }: { 
-  pickupLat: number; 
-  pickupLng: number; 
-  dropoffLat: number; 
-  dropoffLng: number; 
-}) {
-  const map = useMap();
-  
-  useEffect(() => {
-    const bounds = L.latLngBounds(
-      [pickupLat, pickupLng],
-      [dropoffLat, dropoffLng]
-    );
-    map.fitBounds(bounds, { padding: [50, 50] });
-  }, [map, pickupLat, pickupLng, dropoffLat, dropoffLng]);
-  
-  return null;
-}
+// Unused function removed to fix TypeScript error
+// function FitBounds({ pickupLat, pickupLng, dropoffLat, dropoffLng }: { 
+//   pickupLat: number; 
+//   pickupLng: number; 
+//   dropoffLat: number; 
+//   dropoffLng: number; 
+// }) {
+//   const map = useMap();
+//   
+//   useEffect(() => {
+//     const bounds = L.latLngBounds(
+//       [pickupLat, pickupLng],
+//       [dropoffLat, dropoffLng]
+//     );
+//     map.fitBounds(bounds, { padding: [50, 50] });
+//   }, [map, pickupLat, pickupLng, dropoffLat, dropoffLng]);
+//   
+//   return null;
+// }
 
 function CenterOnAgent({ 
   currentLocation, 
@@ -439,7 +440,7 @@ export const TripMap: React.FC<TripMapProps> = ({
       const [lat2, lng2] = route[i + 1];
 
       // Calculate distance from point to line segment
-      const segmentDistance = calculateDistance(lat1, lng1, lat2, lng2);
+      // const segmentDistance = calculateDistance(lat1, lng1, lat2, lng2);
       
       // Project point onto the line segment
       const A = point.lat - lat1;
@@ -682,9 +683,10 @@ export const TripMap: React.FC<TripMapProps> = ({
     }
   };
 
-  const getCurrentIcon = () => {
-    return trackingMode === 'flight' ? airplaneIcon : vehicleIcon;
-  };
+  // Unused function removed to fix TypeScript error
+  // const getCurrentIcon = () => {
+  //   return trackingMode === 'flight' ? airplaneIcon : vehicleIcon;
+  // };
 
   return (
     <div className="w-full rounded-lg border shadow-md mb-6 relative z-0">
