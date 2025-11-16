@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User, AuthContextType } from '../types';
-import { loginWithRolePasscode } from '../api/auth';
+import { loginWithRolePasscode, getMe } from '../api/auth';
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -10,14 +10,31 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const storedToken = localStorage.getItem('token');
-    const storedUser = localStorage.getItem('user');
+    const verifyStoredAuth = async () => {
+      const storedToken = localStorage.getItem('token');
+      const storedUser = localStorage.getItem('user');
 
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-    }
-    setIsLoading(false);
+      if (storedToken && storedUser) {
+        try {
+          // Verify the token is still valid by calling the backend
+          const currentUser = await getMe(storedToken);
+          // If successful, restore the session
+          setToken(storedToken);
+          setUser(currentUser);
+          // Update stored user data in case it changed
+          localStorage.setItem('user', JSON.stringify(currentUser));
+        } catch (error) {
+          // Token is invalid or expired, clear storage
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          setToken(null);
+          setUser(null);
+        }
+      }
+      setIsLoading(false);
+    };
+
+    verifyStoredAuth();
   }, []);
 
   const login = async (role: string, passcode: string) => {

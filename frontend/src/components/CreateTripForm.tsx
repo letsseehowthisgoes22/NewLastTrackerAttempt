@@ -6,6 +6,7 @@ import { TripCreate } from '../types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api';
@@ -40,6 +41,11 @@ export const CreateTripForm = () => {
 
   const [formData, setFormData] = useState<TripCreate>({
     client_name: '',
+    client_age: null,
+    client_build: null,
+    transport_relevant_medical_info: null,
+    parent_guardian_name: null,
+    parent_guardian_relationship: null,
     pickup_location: '',
     dropoff_location: '',
     pickup_lat: null,
@@ -115,6 +121,11 @@ export const CreateTripForm = () => {
 
       const payload: TripCreate = {
         ...formData,
+        client_age: formData.client_age || null,
+        client_build: normalize(formData.client_build),
+        transport_relevant_medical_info: normalize(formData.transport_relevant_medical_info),
+        parent_guardian_name: normalize(formData.parent_guardian_name),
+        parent_guardian_relationship: normalize(formData.parent_guardian_relationship),
         agent_name: normalize(formData.agent_name),
         agent_passcode: agentPasscode,
         parent_name: normalize(formData.parent_name),
@@ -149,8 +160,9 @@ export const CreateTripForm = () => {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <Card>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-800 py-8">
+      <div className="max-w-4xl mx-auto px-4">
+        <Card className="shadow-2xl border-0">
         <CardHeader>
           <CardTitle>Create New Trip</CardTitle>
           <CardDescription>Define the transport details and assign access codes.</CardDescription>
@@ -171,6 +183,62 @@ export const CreateTripForm = () => {
                 onChange={(e) => setFormData({ ...formData, client_name: e.target.value })}
                 required
               />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="client_age">Age</Label>
+                <Input
+                  id="client_age"
+                  type="number"
+                  min="0"
+                  max="120"
+                  value={formData.client_age || ''}
+                  onChange={(e) => setFormData({ ...formData, client_age: e.target.value ? parseInt(e.target.value) : null })}
+                  placeholder="Age"
+                />
+              </div>
+              <div>
+                <Label htmlFor="client_build">Build</Label>
+                <Input
+                  id="client_build"
+                  value={formData.client_build || ''}
+                  onChange={(e) => setFormData({ ...formData, client_build: e.target.value || null })}
+                  placeholder="e.g., Small, Medium, Large, etc."
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="transport_relevant_medical_info">Transport Relevant Medical Information</Label>
+              <Textarea
+                id="transport_relevant_medical_info"
+                value={formData.transport_relevant_medical_info || ''}
+                onChange={(e) => setFormData({ ...formData, transport_relevant_medical_info: e.target.value || null })}
+                placeholder="Enter any medical information relevant to transport (allergies, mobility needs, medications, etc.)"
+                rows={4}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="parent_guardian_name">Parent/Guardian Name</Label>
+                <Input
+                  id="parent_guardian_name"
+                  value={formData.parent_guardian_name || ''}
+                  onChange={(e) => setFormData({ ...formData, parent_guardian_name: e.target.value || null })}
+                  placeholder="Full name"
+                />
+              </div>
+              <div>
+                <Label htmlFor="parent_guardian_relationship">Relationship to Client</Label>
+                <Input
+                  id="parent_guardian_relationship"
+                  value={formData.parent_guardian_relationship || ''}
+                  onChange={(e) => setFormData({ ...formData, parent_guardian_relationship: e.target.value || null })}
+                  placeholder="e.g., Mother, Father, Grandmother, etc."
+                />
+              </div>
             </div>
 
             <div>
@@ -376,6 +444,7 @@ export const CreateTripForm = () => {
           </form>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 };

@@ -263,6 +263,90 @@ export const releaseChat = async (token: string, tripId: number): Promise<{ succ
   return response.data;
 };
 
+export const clearTripMessages = async (token: string, tripId: number): Promise<{ message: string }> => {
+  const response = await api.delete<{ message: string }>(
+    `/api/trips/${tripId}/messages`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
+// ----- Milestones & Notifications -----
+
+export interface MilestoneUpdatePayload {
+  milestone: 1 | 2 | 3 | 4 | 5;
+  completed: boolean;
+  confirm?: boolean;
+}
+
+export interface NotificationRecipient {
+  id?: number;
+  event: 'trip_started' | 'sixty_miles' | 'complete';
+  name?: string;
+  email?: string;
+  phone?: string;
+  send_email: boolean;
+  send_sms: boolean;
+}
+
+export interface NotificationSettingsResponse {
+  trip_id: number;
+  recipients: NotificationRecipient[];
+}
+
+export const updateMilestone = async (
+  token: string,
+  tripId: number,
+  payload: MilestoneUpdatePayload
+): Promise<any> => {
+  const response = await api.put(
+    `/api/trips/${tripId}/milestones`,
+    payload,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
+export const getNotificationSettings = async (
+  token: string,
+  tripId: number
+): Promise<NotificationSettingsResponse> => {
+  const response = await api.get<NotificationSettingsResponse>(
+    `/api/trips/${tripId}/notifications`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
+export const saveNotificationSettings = async (
+  token: string,
+  tripId: number,
+  recipients: NotificationRecipient[]
+): Promise<NotificationSettingsResponse> => {
+  const response = await api.put<NotificationSettingsResponse>(
+    `/api/trips/${tripId}/notifications`,
+    recipients,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+};
+
 export interface StatusHistoryRecord {
   id: number;
   old_status: string;
@@ -296,6 +380,24 @@ export const updateTripStatus = async (
 
 export const getStatusHistory = async (token: string, tripId: number): Promise<StatusHistoryResponse> => {
   const response = await api.get<StatusHistoryResponse>(`/api/trips/${tripId}/status-history`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  return response.data;
+};
+
+export interface TripCredentials {
+  agent_name: string;
+  agent_passcode: string;
+  parent_name: string;
+  parent_passcode: string;
+  clinician_name: string;
+  clinician_passcode: string;
+}
+
+export const updateTripCredentials = async (token: string, tripId: number, credentials: TripCredentials): Promise<Trip> => {
+  const response = await api.put<Trip>(`/api/trips/${tripId}/credentials`, credentials, {
     headers: {
       Authorization: `Bearer ${token}`,
     },

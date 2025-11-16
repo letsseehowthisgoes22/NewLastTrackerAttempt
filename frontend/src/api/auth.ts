@@ -17,6 +17,9 @@ export const loginWithEmail = async (email: string, password: string): Promise<L
 
 const roleEmailMap: Record<string, string> = {
   admin: 'admin@iyt.com',
+  agent: 'agent@iyt.com',
+  parent: 'parent@iyt.com',
+  clinician: 'clinician@iyt.com',
 };
 
 const buildVirtualEmail = (role: string, passcode: string) => {
@@ -33,8 +36,30 @@ export const loginWithRolePasscode = async (role: string, passcode: string): Pro
     throw new Error('Passcode is required');
   }
 
-  const email = roleEmailMap[normalizedRole] ?? buildVirtualEmail(normalizedRole, safePasscode);
-  return loginWithEmail(email, safePasscode);
+  // Always try virtual email first (trip-specific users)
+  // This ensures custom passcodes per trip work correctly
+  const virtualEmail = buildVirtualEmail(normalizedRole, safePasscode);
+  
+  try {
+    // Try virtual email first (for trip-specific passcodes like "Batman123")
+    return await loginWithEmail(virtualEmail, safePasscode);
+  } catch (error: any) {
+    // If virtual email login fails, try hardcoded test user (for default passcodes like "agent123")
+    // Only try hardcoded if it's a 401/403 error (authentication failed)
+    if (error?.response?.status === 401 || error?.response?.status === 403) {
+      const hardcodedEmail = roleEmailMap[normalizedRole];
+      if (hardcodedEmail) {
+        try {
+          return await loginWithEmail(hardcodedEmail, safePasscode);
+        } catch (hardcodedError) {
+          // Both failed, throw the original virtual email error
+          throw error;
+        }
+      }
+    }
+    // If it's not an auth error or no hardcoded user, throw the original error
+    throw error;
+  }
 };
 
 export const getMe = async (token: string): Promise<User> => {

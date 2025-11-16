@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import './TripMap.css';
 import { getLatestLocation, getLocationHistory, getFlightInfo, FlightInfo, getTrackingMode } from '../api/trips';
 import { useAuth } from '../context/AuthContext';
 import { io, Socket } from 'socket.io-client';
@@ -36,14 +37,32 @@ const dropoffIcon = new L.Icon({
   shadowSize: [41, 41]
 });
 
+// Moving vehicle icon - uses a more dynamic color and will be animated
 const vehicleIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-blue.png',
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
+  iconSize: [32, 32], // Slightly larger for visibility
+  iconAnchor: [16, 16],
   popupAnchor: [1, -34],
   shadowSize: [41, 41]
 });
+
+// Create a pulsing animated dot marker for the moving agent
+const createPulsingMarker = () => {
+  return L.divIcon({
+    className: 'pulsing-marker',
+    html: `
+      <div class="pulse-container">
+        <div class="pulse-ring"></div>
+        <div class="pulse-ring-delay"></div>
+        <div class="moving-dot"></div>
+      </div>
+    `,
+    iconSize: [40, 40],
+    iconAnchor: [20, 20],
+    popupAnchor: [0, -20]
+  });
+};
 
 const airplaneIcon = new L.Icon({
   iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-violet.png',
@@ -82,6 +101,40 @@ function FitBounds({ pickupLat, pickupLng, dropoffLat, dropoffLng }: {
     );
     map.fitBounds(bounds, { padding: [50, 50] });
   }, [map, pickupLat, pickupLng, dropoffLat, dropoffLng]);
+  
+  return null;
+}
+
+function CenterOnAgent({ 
+  currentLocation, 
+  fallbackToRoute,
+  pickupLat,
+  pickupLng,
+  dropoffLat,
+  dropoffLng
+}: { 
+  currentLocation: { lat: number; lng: number } | null;
+  fallbackToRoute: boolean;
+  pickupLat: number;
+  pickupLng: number;
+  dropoffLat: number;
+  dropoffLng: number;
+}) {
+  const map = useMap();
+  
+  useEffect(() => {
+    if (currentLocation) {
+      // Center on agent location with a reasonable zoom level for tracking
+      map.setView([currentLocation.lat, currentLocation.lng], 15, { animate: true });
+    } else if (fallbackToRoute) {
+      // Fallback: center on route
+      const bounds = L.latLngBounds(
+        [pickupLat, pickupLng],
+        [dropoffLat, dropoffLng]
+      );
+      map.fitBounds(bounds, { padding: [50, 50] });
+    }
+  }, [map, currentLocation, fallbackToRoute, pickupLat, pickupLng, dropoffLat, dropoffLng]);
   
   return null;
 }
@@ -331,10 +384,12 @@ export const TripMap: React.FC<TripMapProps> = ({
     );
   }
 
-  const centerLat = (validPickupLat + validDropoffLat) / 2;
-  const centerLng = (validPickupLng + validDropoffLng) / 2;
+  // Default center (used only for initial map load, will be overridden by CenterOnAgent)
+  // Prioritize agent location if available, otherwise use route center
+  const defaultCenterLat = currentLocation ? currentLocation.lat : (validPickupLat + validDropoffLat) / 2;
+  const defaultCenterLng = currentLocation ? currentLocation.lng : (validPickupLng + validDropoffLng) / 2;
 
-  // Calculate distance between two coordinates using Haversine formula
+  // Calculate distance between two coordinates using Haversine formula (returns km)
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
     const R = 6371; // Earth's radius in km
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -344,6 +399,95 @@ export const TripMap: React.FC<TripMapProps> = ({
               Math.sin(dLon / 2) * Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
+  };
+
+  // Convert km to miles
+  const kmToMiles = (km: number): number => {
+    return km * 0.621371;
+  };
+
+  // Format minutes into hours and minutes
+  const formatDuration = (minutes: number): string => {
+    if (minutes < 60) {
+      return `${minutes} min`;
+    }
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    if (mins === 0) {
+      return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+    }
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'} ${mins} min`;
+  };
+
+  // Find the closest point on a polyline to a given point
+  const findClosestPointOnRoute = (
+    point: { lat: number; lng: number },
+    route: Array<[number, number]>
+  ): { closestPoint: [number, number] | null; distanceAlongRoute: number; distanceToRoute: number } => {
+    if (route.length === 0 || !point) {
+      return { closestPoint: null, distanceAlongRoute: 0, distanceToRoute: Infinity };
+    }
+
+    let minDistance = Infinity;
+    let closestSegmentIndex = 0;
+    let closestPointOnSegment: [number, number] | null = null;
+    let totalDistanceToClosest = 0;
+
+    // Find the closest point on the route polyline
+    for (let i = 0; i < route.length - 1; i++) {
+      const [lat1, lng1] = route[i];
+      const [lat2, lng2] = route[i + 1];
+
+      // Calculate distance from point to line segment
+      const segmentDistance = calculateDistance(lat1, lng1, lat2, lng2);
+      
+      // Project point onto the line segment
+      const A = point.lat - lat1;
+      const B = point.lng - lng1;
+      const C = lat2 - lat1;
+      const D = lng2 - lng1;
+      const dot = A * C + B * D;
+      const lenSq = C * C + D * D;
+      let param = lenSq !== 0 ? dot / lenSq : -1;
+
+      let closestLat: number, closestLng: number;
+      if (param < 0) {
+        closestLat = lat1;
+        closestLng = lng1;
+      } else if (param > 1) {
+        closestLat = lat2;
+        closestLng = lng2;
+      } else {
+        closestLat = lat1 + param * C;
+        closestLng = lng1 + param * D;
+      }
+
+      const distToSegment = calculateDistance(point.lat, point.lng, closestLat, closestLng);
+
+      if (distToSegment < minDistance) {
+        minDistance = distToSegment;
+        closestSegmentIndex = i;
+        closestPointOnSegment = [closestLat, closestLng];
+        
+        // Calculate distance along route from pickup to this closest point
+        let distanceAlongRoute = 0;
+        for (let j = 0; j <= closestSegmentIndex; j++) {
+          if (j < closestSegmentIndex) {
+            distanceAlongRoute += calculateDistance(route[j][0], route[j][1], route[j + 1][0], route[j + 1][1]);
+          } else if (j === closestSegmentIndex && closestPointOnSegment) {
+            // Add distance from segment start to closest point
+            distanceAlongRoute += calculateDistance(route[j][0], route[j][1], closestPointOnSegment[0], closestPointOnSegment[1]);
+          }
+        }
+        totalDistanceToClosest = distanceAlongRoute;
+      }
+    }
+
+    return {
+      closestPoint: closestPointOnSegment,
+      distanceAlongRoute: totalDistanceToClosest,
+      distanceToRoute: minDistance
+    };
   };
 
   useEffect(() => {
@@ -389,23 +533,33 @@ export const TripMap: React.FC<TripMapProps> = ({
     fetchRoute();
   }, [validPickupLat, validPickupLng, validDropoffLat, validDropoffLng]);
 
-  // Calculate traveled distance and progress
+  // Calculate traveled distance and progress based on distance along the route
   useEffect(() => {
-    if (locationHistory.length > 1 && routeDistance) {
-      let totalTraveled = 0;
-      for (let i = 1; i < locationHistory.length; i++) {
-        const [lat1, lng1] = locationHistory[i - 1];
-        const [lat2, lng2] = locationHistory[i];
-        totalTraveled += calculateDistance(lat1, lng1, lat2, lng2);
+    if (currentLocation && routePolyline.length > 0 && routeDistance) {
+      // Find closest point on route and calculate distance along route from pickup
+      const routeInfo = findClosestPointOnRoute(currentLocation, routePolyline);
+      
+      // Only count progress if agent is reasonably close to the route (within 5km/3 miles)
+      // This prevents showing progress when agent is on the other side of the country
+      const MAX_DISTANCE_FROM_ROUTE = 5; // km
+      
+      if (routeInfo.distanceToRoute <= MAX_DISTANCE_FROM_ROUTE) {
+        setTraveledDistance(routeInfo.distanceAlongRoute);
+        setRouteProgress(Math.min((routeInfo.distanceAlongRoute / routeDistance) * 100, 100));
+      } else {
+        // Agent is too far from route, don't update progress
+        // Keep previous values or set to 0 if this is the first location
+        if (traveledDistance === 0) {
+          setTraveledDistance(0);
+          setRouteProgress(0);
+        }
       }
-      setTraveledDistance(totalTraveled);
-      setRouteProgress(Math.min((totalTraveled / routeDistance) * 100, 100));
-    } else if (locationHistory.length === 0) {
+    } else if (!currentLocation || routePolyline.length === 0) {
       setTraveledDistance(0);
       setRouteProgress(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locationHistory, routeDistance]);
+  }, [currentLocation, routePolyline, routeDistance]);
 
   useEffect(() => {
     if (!isLive || !tripId || !token || !sharingEnabled) return;
@@ -478,6 +632,13 @@ export const TripMap: React.FC<TripMapProps> = ({
     }
   };
 
+  // Update tracking mode to GPS when we receive location updates
+  useEffect(() => {
+    if (currentLocation && trackingMode === 'unknown') {
+      setTrackingMode('gps');
+    }
+  }, [currentLocation, trackingMode]);
+
   const getTimeAgo = (date: Date) => {
     const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
     if (seconds < 60) return `${seconds} seconds ago`;
@@ -503,6 +664,12 @@ export const TripMap: React.FC<TripMapProps> = ({
   };
 
   const getTrackingModeDisplay = () => {
+    // If we have a current location, show GPS tracking even if mode is unknown
+    // This prevents showing "Location Unavailable" when location is actually available
+    if (currentLocation && trackingMode === 'unknown') {
+      return { icon: '📍', text: 'GPS Tracking', color: 'text-green-600', description: 'Real-time location from transport agent' };
+    }
+    
     switch (trackingMode) {
       case 'gps':
         return { icon: '📍', text: 'GPS Tracking', color: 'text-green-600', description: 'Real-time location from transport agent' };
@@ -520,11 +687,11 @@ export const TripMap: React.FC<TripMapProps> = ({
   };
 
   return (
-    <div className="w-full rounded-lg overflow-hidden border shadow-md">
-      <div className="relative h-[400px]">
+    <div className="w-full rounded-lg border shadow-md mb-6 relative z-0">
+      <div className="relative h-[400px] overflow-hidden rounded-t-lg" style={{ height: '400px', minHeight: '400px' }}>
         <MapContainer
-          center={[centerLat, centerLng]}
-          zoom={10}
+          center={[defaultCenterLat, defaultCenterLng]}
+          zoom={currentLocation ? 15 : 10}
           style={{ height: '100%', width: '100%' }}
           scrollWheelZoom={true}
         >
@@ -555,9 +722,12 @@ export const TripMap: React.FC<TripMapProps> = ({
             </Popup>
           </Marker>
 
-          {/* Agent Location Marker - only show if live tracking and location exists */}
+          {/* Agent Location Marker - animated pulsing dot for moving vehicle */}
           {isLive && currentLocation && (
-            <Marker position={[currentLocation.lat, currentLocation.lng]} icon={getCurrentIcon()}>
+            <Marker 
+              position={[currentLocation.lat, currentLocation.lng]} 
+              icon={trackingMode === 'flight' ? airplaneIcon : createPulsingMarker()}
+            >
               <Popup>
                 <div className="text-sm">
                   <strong>{trackingMode === 'flight' ? 'Aircraft' : 'Transport Agent'}</strong>
@@ -580,10 +750,9 @@ export const TripMap: React.FC<TripMapProps> = ({
           {routePolyline.length > 0 && (
             <Polyline
               positions={routePolyline}
-              color="#9CA3AF"
-              weight={4}
-              opacity={0.5}
-              dashArray="10, 5"
+              color="#2563EB"
+              weight={6}
+              opacity={0.8}
             />
           )}
 
@@ -597,12 +766,14 @@ export const TripMap: React.FC<TripMapProps> = ({
             />
           )}
           
-          {/* Auto-fit bounds to show both markers */}
-          <FitBounds 
-            pickupLat={validPickupLat} 
-            pickupLng={validPickupLng} 
-            dropoffLat={validDropoffLat} 
-            dropoffLng={validDropoffLng} 
+          {/* Center on agent location if available, otherwise fit to route */}
+          <CenterOnAgent
+            currentLocation={currentLocation}
+            fallbackToRoute={!currentLocation}
+            pickupLat={validPickupLat}
+            pickupLng={validPickupLng}
+            dropoffLat={validDropoffLat}
+            dropoffLng={validDropoffLng}
           />
 
           {/* Live location updater */}
@@ -630,71 +801,75 @@ export const TripMap: React.FC<TripMapProps> = ({
 
       {/* Route information and progress */}
       {routeDistance && sharingEnabled && (
-        <div className="bg-blue-50 px-4 py-2 border-t">
-          <div className="flex items-center justify-between text-sm mb-2">
-            <div className="flex-1">
-              <div className="font-medium text-blue-900">Route Information</div>
-              <div className="text-xs text-blue-800 mt-1">
-                Total Distance: {routeDistance.toFixed(1)} km
-                {routeDuration && ` • Estimated Time: ${routeDuration} min`}
+        <div className="bg-blue-50 px-6 py-5 border-t relative z-0">
+          <div className="space-y-5">
+            <div>
+              <div className="font-medium text-blue-900 mb-3 text-base">Route Information</div>
+              <div className="text-sm text-blue-800 space-y-3">
+                <div className="font-medium">Total Distance: {kmToMiles(routeDistance).toFixed(1)} miles</div>
+                {routeDuration && (
+                  <div className="font-medium">Estimated Time: {formatDuration(routeDuration)}</div>
+                )}
               </div>
             </div>
-          </div>
-          {isLive && sharingEnabled && (
-            <>
-              <div className="mt-2 mb-1">
-                <div className="flex justify-between text-xs text-blue-800 mb-1">
-                  <span>Progress</span>
-                  <span>{routeProgress.toFixed(1)}%</span>
+            {isLive && sharingEnabled && (
+              <div className="pt-4 border-t border-blue-300">
+                <div className="flex justify-between items-center text-sm text-blue-800 mb-4">
+                  <span className="font-semibold text-base">Progress</span>
+                  <span className="font-bold text-base">{routeProgress.toFixed(1)}%</span>
                 </div>
-                <div className="w-full bg-blue-200 rounded-full h-2">
+                <div className="w-full bg-blue-200 rounded-full h-3 mb-4">
                   <div 
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                    className="bg-blue-600 h-3 rounded-full transition-all duration-300"
                     style={{ width: `${routeProgress}%` }}
                   />
                 </div>
+                <div className="text-sm text-blue-800 space-y-3">
+                  <div className="font-medium">
+                    Traveled: {kmToMiles(traveledDistance).toFixed(1)} miles / {kmToMiles(routeDistance).toFixed(1)} miles
+                  </div>
+                  {currentLocation && routeDistance && (
+                    <div className="font-medium">
+                      Remaining: {kmToMiles(Math.max(0, routeDistance - traveledDistance)).toFixed(1)} miles
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="text-xs text-blue-800 mt-1">
-                Traveled: {traveledDistance.toFixed(1)} km / {routeDistance.toFixed(1)} km
-                {currentLocation && routeDistance && (
-                  <span className="ml-2">
-                    • Remaining: {(routeDistance - traveledDistance).toFixed(1)} km
-                  </span>
-                )}
-              </div>
-            </>
-          )}
+            )}
+          </div>
         </div>
       )}
 
       {/* Tracking mode indicator */}
       {isLive && sharingEnabled && (
-        <div className="bg-gray-50 px-4 py-2 border-t">
-          <div className="flex items-center justify-between text-sm mb-2">
-            <div className="flex items-center gap-2">
-              <span>{getTrackingModeDisplay().icon}</span>
-              <div>
-                <span className={`font-medium ${getTrackingModeDisplay().color}`}>
+        <div className="bg-gray-50 px-6 py-5 border-t relative z-0">
+          <div className="space-y-5">
+            <div className="flex items-start gap-4">
+              <span className="text-xl flex-shrink-0">{getTrackingModeDisplay().icon}</span>
+              <div className="flex-1 min-w-0">
+                <div className={`font-semibold ${getTrackingModeDisplay().color} mb-2 text-base`}>
                   {getTrackingModeDisplay().text}
-                </span>
-                <div className="text-xs text-gray-500">
+                </div>
+                <div className="text-sm text-gray-600">
                   {getTrackingModeDisplay().description}
                 </div>
               </div>
             </div>
-          </div>
-          <div className="flex items-center justify-between text-sm">
-            <div className="flex items-center gap-2">
-              <span>{getConnectionStatusDisplay().icon}</span>
-              <span className={`font-medium ${getConnectionStatusDisplay().color}`}>
-                {getConnectionStatusDisplay().text}
-              </span>
+            <div className="pt-4 border-t border-gray-300">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <span className="text-lg">{getConnectionStatusDisplay().icon}</span>
+                  <span className={`text-sm font-semibold ${getConnectionStatusDisplay().color}`}>
+                    {getConnectionStatusDisplay().text}
+                  </span>
+                </div>
+                {lastUpdate && (
+                  <span className="text-sm text-gray-600">
+                    Last updated: {getTimeAgo(lastUpdate)}
+                  </span>
+                )}
+              </div>
             </div>
-            {lastUpdate && (
-              <span className="text-gray-600">
-                Last updated: {getTimeAgo(lastUpdate)}
-              </span>
-            )}
           </div>
         </div>
       )}

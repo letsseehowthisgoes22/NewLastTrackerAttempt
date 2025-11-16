@@ -16,6 +16,8 @@ psycopg = {extras = ["binary"], version = "^3.2.12"}
 python-socketio = "^5.11.0"
 requests = "^2.32.5"
 python-dateutil = "^2.9.0.post0"
+sendgrid = "^6.12.5"
+twilio = "^9.8.6"
 
 
 [build-system]

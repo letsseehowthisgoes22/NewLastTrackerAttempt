@@ -28,3 +28,4 @@ poetry.lock
 .idea/
 *.swp
 *.swo
+sendgrid.env

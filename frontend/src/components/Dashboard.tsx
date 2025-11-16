@@ -24,12 +24,12 @@ export const Dashboard = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="bg-white shadow">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-800">
+      <header className="bg-white/10 backdrop-blur-sm border-b border-white/20 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex justify-between items-center">
           <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold text-gray-900 cursor-pointer" onClick={() => navigate('/')}>
-              IYT Transport Tracker
+            <h1 className="text-2xl font-bold text-white cursor-pointer" onClick={() => navigate('/')}>
+              IYT Compass
             </h1>
             <Badge className={getRoleBadgeColor(user?.role || '')}>
               {user?.role?.toUpperCase()}
@@ -47,7 +47,7 @@ export const Dashboard = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8">
-        <Card>
+        <Card className="shadow-2xl border-0">
           <CardHeader>
             <CardTitle>
               Welcome, {user?.first_name} {user?.last_name}!

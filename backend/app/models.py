@@ -20,6 +20,11 @@ class LoginResponse(BaseModel):
 
 class TripCreate(BaseModel):
     client_name: str
+    client_age: Optional[int] = None
+    client_build: Optional[str] = None
+    transport_relevant_medical_info: Optional[str] = None
+    parent_guardian_name: Optional[str] = None
+    parent_guardian_relationship: Optional[str] = None
     pickup_location: str
     dropoff_location: str
     pickup_lat: Optional[Decimal] = None
@@ -43,6 +48,11 @@ class TripCreate(BaseModel):
 
 class TripUpdate(BaseModel):
     client_name: Optional[str] = None
+    client_age: Optional[int] = None
+    client_build: Optional[str] = None
+    transport_relevant_medical_info: Optional[str] = None
+    parent_guardian_name: Optional[str] = None
+    parent_guardian_relationship: Optional[str] = None
     pickup_location: Optional[str] = None
     dropoff_location: Optional[str] = None
     pickup_lat: Optional[Decimal] = None
@@ -71,6 +81,11 @@ class TripUpdate(BaseModel):
 class TripResponse(BaseModel):
     id: int
     client_name: str
+    client_age: Optional[int] = None
+    client_build: Optional[str] = None
+    transport_relevant_medical_info: Optional[str] = None
+    parent_guardian_name: Optional[str] = None
+    parent_guardian_relationship: Optional[str] = None
     pickup_location: str
     dropoff_location: str
     pickup_lat: Optional[Decimal] = None
@@ -104,6 +119,14 @@ class TripResponse(BaseModel):
     chat_taken_over_by: Optional[int] = None
     chat_takeover_at: Optional[datetime] = None
     location_sharing_enabled: Optional[bool] = True
+    # Milestones
+    m1_began_route_to_pickup: Optional[bool] = False
+    m2_arrived_pickup: Optional[bool] = False
+    m3_en_route_to_destination: Optional[bool] = False
+    m4_arrived_dropoff: Optional[bool] = False
+    m5_transport_complete: Optional[bool] = False
+    milestone_updated_at: Optional[datetime] = None
+    notified_sixty_miles: Optional[bool] = False
 
 class LocationUpdate(BaseModel):
     latitude: float
@@ -175,3 +198,29 @@ class UnreadCountResponse(BaseModel):
 
 class LocationSharingUpdate(BaseModel):
     enabled: bool
+
+class TripCredentialsUpdate(BaseModel):
+    agent_name: str
+    agent_passcode: str
+    parent_name: str
+    parent_passcode: str
+    clinician_name: str
+    clinician_passcode: str
+
+class MilestoneUpdate(BaseModel):
+    milestone: int
+    completed: bool = True
+    confirm: Optional[bool] = False
+
+class NotificationRecipient(BaseModel):
+    id: Optional[int] = None
+    event: str  # 'trip_started' | 'sixty_miles' | 'complete'
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    phone: Optional[str] = None
+    send_email: bool = True
+    send_sms: bool = False
+
+class NotificationSettingsResponse(BaseModel):
+    trip_id: int
+    recipients: List[NotificationRecipient]

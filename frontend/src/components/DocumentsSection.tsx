@@ -90,6 +90,14 @@ export const DocumentsSection = ({ tripId }: DocumentsSectionProps) => {
     }
   };
 
+  const handleOpenInNewTab = (doc: Document) => {
+    if (!token) return;
+    // Open inline view endpoint so browser renders PDF/images directly
+    const base = import.meta.env.VITE_API_URL || 'http://10.201.82.252:8000';
+    const url = `${base}/api/documents/${doc.id}/view?token=${encodeURIComponent(token)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
   const handleDelete = async (documentId: number) => {
     if (!token) return;
     if (!window.confirm('Are you sure you want to delete this document?')) return;
@@ -196,15 +204,26 @@ export const DocumentsSection = ({ tripId }: DocumentsSectionProps) => {
                 <div className="flex items-center space-x-3 flex-1">
                   {getFileIcon(doc.filename)}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 truncate">
+                    <button
+                      className="text-left text-sm font-medium text-blue-600 hover:underline truncate"
+                      onClick={() => handleOpenInNewTab(doc)}
+                      title="Open in new tab"
+                    >
                       {doc.filename}
-                    </p>
+                    </button>
                     <p className="text-xs text-gray-500">
                       Uploaded by {doc.uploader_name || 'Unknown'} • {formatDate(doc.uploaded_at)} • {formatFileSize(doc.file_size)}
                     </p>
                   </div>
                 </div>
                 <div className="flex items-center space-x-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleOpenInNewTab(doc)}
+                  >
+                    Open
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"

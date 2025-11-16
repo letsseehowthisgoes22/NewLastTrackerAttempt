@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import FileResponse
@@ -16,12 +16,14 @@ from app.models import (
     DocumentResponse, MessageResponse,
     LocationUpdate, LocationUpdateResponse,
     MessageCreate, MessageResponseItem, MessagesResponse, UnreadCountResponse,
-    LocationSharingUpdate
+    LocationSharingUpdate, TripCredentialsUpdate, MilestoneUpdate,
+    NotificationRecipient, NotificationSettingsResponse
 )
 from app.websocket import sio, broadcast_location_update
 from app.flight_tracking import fetch_flight_status
 from app.tracking_mode import determine_tracking_mode, update_trip_tracking_mode
 from app.rate_limiter import rate_limiter
+from app.notifications import send_email, send_sms
 import socketio
 import html
 
@@ -227,18 +229,25 @@ async def create_trip(trip_data: TripCreate, current_user: dict = Depends(get_cu
 
     query = """
         INSERT INTO trips (
-            client_name, pickup_location, dropoff_location,
+            client_name, client_age, client_build, transport_relevant_medical_info,
+            parent_guardian_name, parent_guardian_relationship,
+            pickup_location, dropoff_location,
             pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
             scheduled_start, scheduled_end, flight_number, airline,
             assigned_agent_id, assigned_parent_id, assigned_clinician_id,
             clinician_name, clinician_phone, clinician_email, additional_info,
             created_by_id, status, location_sharing_enabled
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         RETURNING *
     """
     
     cursor.execute(query, (
         trip_data.client_name,
+        trip_data.client_age,
+        trip_data.client_build,
+        trip_data.transport_relevant_medical_info,
+        trip_data.parent_guardian_name,
+        trip_data.parent_guardian_relationship,
         trip_data.pickup_location,
         trip_data.dropoff_location,
         trip_data.pickup_lat,
@@ -525,6 +534,21 @@ async def update_trip(trip_id: int, trip_data: TripUpdate, current_user: dict = 
     if trip_data.client_name is not None:
         update_fields.append("client_name = %s")
         update_values.append(trip_data.client_name)
+    if trip_data.client_age is not None:
+        update_fields.append("client_age = %s")
+        update_values.append(trip_data.client_age)
+    if trip_data.client_build is not None:
+        update_fields.append("client_build = %s")
+        update_values.append(trip_data.client_build)
+    if trip_data.transport_relevant_medical_info is not None:
+        update_fields.append("transport_relevant_medical_info = %s")
+        update_values.append(trip_data.transport_relevant_medical_info)
+    if trip_data.parent_guardian_name is not None:
+        update_fields.append("parent_guardian_name = %s")
+        update_values.append(trip_data.parent_guardian_name)
+    if trip_data.parent_guardian_relationship is not None:
+        update_fields.append("parent_guardian_relationship = %s")
+        update_values.append(trip_data.parent_guardian_relationship)
     if trip_data.pickup_location is not None:
         update_fields.append("pickup_location = %s")
         update_values.append(trip_data.pickup_location)
@@ -614,6 +638,167 @@ async def update_trip(trip_id: int, trip_data: TripUpdate, current_user: dict = 
         updated_trip["agent_passcode"] = None
         updated_trip["parent_passcode"] = None
         updated_trip["clinician_passcode"] = None
+    
+    cursor.close()
+    conn.close()
+    
+    return TripResponse(**updated_trip)
+
+@app.put("/api/trips/{trip_id}/credentials", response_model=TripResponse)
+async def update_trip_credentials(
+    trip_id: int,
+    credentials: TripCredentialsUpdate,
+    current_user: dict = Depends(get_current_user)
+):
+    """Update trip credentials (names and passcodes) - admin only"""
+    if current_user["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can update trip credentials"
+        )
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    existing_trip = cursor.fetchone()
+    
+    if not existing_trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    # Get existing user IDs before updating
+    existing_agent_id = existing_trip.get("assigned_agent_id")
+    existing_parent_id = existing_trip.get("assigned_parent_id")
+    existing_clinician_id = existing_trip.get("assigned_clinician_id")
+    
+    # Check if passcodes are actually changing by looking at existing users
+    agent_id = existing_agent_id  # Keep existing if no passcode provided
+    if credentials.agent_passcode:
+        # Check if the existing user has the same passcode (case-insensitive for email lookup)
+        if existing_agent_id:
+            cursor.execute("SELECT password, email FROM users WHERE id = %s", (existing_agent_id,))
+            existing_agent_user = cursor.fetchone()
+            if existing_agent_user and existing_agent_user.get("password") == credentials.agent_passcode:
+                # Same passcode, just update name if needed
+                if credentials.agent_name:
+                    update_user_name(cursor, existing_agent_id, credentials.agent_name)
+                agent_id = existing_agent_id
+            else:
+                # Passcode changed, create/update to new virtual user
+                agent_id = ensure_role_user(
+                    cursor,
+                    "agent",
+                    credentials.agent_name,
+                    credentials.agent_passcode
+                )
+        else:
+            # No existing agent, create new one
+            agent_id = ensure_role_user(
+                cursor,
+                "agent",
+                credentials.agent_name,
+                credentials.agent_passcode
+            )
+    
+    # Update parent credentials
+    parent_id = existing_parent_id  # Keep existing if no passcode provided
+    if credentials.parent_passcode:
+        if existing_parent_id:
+            cursor.execute("SELECT password, email FROM users WHERE id = %s", (existing_parent_id,))
+            existing_parent_user = cursor.fetchone()
+            if existing_parent_user and existing_parent_user.get("password") == credentials.parent_passcode:
+                # Same passcode, just update name if needed
+                if credentials.parent_name:
+                    update_user_name(cursor, existing_parent_id, credentials.parent_name)
+                parent_id = existing_parent_id
+            else:
+                # Passcode changed, create/update to new virtual user
+                parent_id = ensure_role_user(
+                    cursor,
+                    "parent",
+                    credentials.parent_name,
+                    credentials.parent_passcode
+                )
+        else:
+            # No existing parent, create new one
+            parent_id = ensure_role_user(
+                cursor,
+                "parent",
+                credentials.parent_name,
+                credentials.parent_passcode
+            )
+    
+    # Update clinician credentials
+    clinician_id = existing_clinician_id  # Keep existing if no passcode provided
+    if credentials.clinician_passcode:
+        if existing_clinician_id:
+            cursor.execute("SELECT password, email FROM users WHERE id = %s", (existing_clinician_id,))
+            existing_clinician_user = cursor.fetchone()
+            if existing_clinician_user and existing_clinician_user.get("password") == credentials.clinician_passcode:
+                # Same passcode, just update name if needed
+                if credentials.clinician_name:
+                    update_user_name(cursor, existing_clinician_id, credentials.clinician_name)
+                clinician_id = existing_clinician_id
+            else:
+                # Passcode changed, create/update to new virtual user
+                clinician_id = ensure_role_user(
+                    cursor,
+                    "clinician",
+                    credentials.clinician_name,
+                    credentials.clinician_passcode
+                )
+        else:
+            # No existing clinician, create new one
+            clinician_id = ensure_role_user(
+                cursor,
+                "clinician",
+                credentials.clinician_name,
+                credentials.clinician_passcode
+            )
+    
+    # Update the trip with new user assignments
+    cursor.execute(
+        """
+        UPDATE trips 
+        SET assigned_agent_id = %s,
+            assigned_parent_id = %s,
+            assigned_clinician_id = %s,
+            clinician_name = %s,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = %s
+        """,
+        (
+            agent_id,
+            parent_id,
+            clinician_id,
+            credentials.clinician_name,
+            trip_id
+        )
+    )
+    conn.commit()
+    
+    # Fetch updated trip with names
+    query_with_names = """
+        SELECT t.*, 
+               ua.first_name || ' ' || ua.last_name as agent_name,
+               ua.password as agent_passcode,
+               up.first_name || ' ' || up.last_name as parent_name,
+               up.password as parent_passcode,
+               uc.first_name || ' ' || uc.last_name as assigned_clinician_name,
+               uc.password as clinician_passcode
+        FROM trips t
+        LEFT JOIN users ua ON t.assigned_agent_id = ua.id
+        LEFT JOIN users up ON t.assigned_parent_id = up.id
+        LEFT JOIN users uc ON t.assigned_clinician_id = uc.id
+        WHERE t.id = %s
+    """
+    cursor.execute(query_with_names, (trip_id,))
+    updated_trip = cursor.fetchone()
     
     cursor.close()
     conn.close()
@@ -947,13 +1132,53 @@ async def download_document(document_id: int, request: Request = None, current_u
             detail="File not found on server"
         )
     
+    media_type = document.get("file_type") or mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
     log_document_access(document_id, user_id, "download", client_ip, True)
-    
-    return FileResponse(
-        path=file_path,
-        filename=document["filename"],
-        media_type="application/octet-stream"
-    )
+    return FileResponse(path=file_path, filename=document["filename"], media_type=media_type)
+
+@app.get("/api/documents/{document_id}/view")
+async def view_document(document_id: int, token: str = Query(...)):
+    """Inline view of a document in browser using a JWT token in query string."""
+    try:
+        payload = verify_token(token)
+        user_id = payload.get("user_id")
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM documents WHERE id = %s", (document_id,))
+    document = cursor.fetchone()
+    if not document:
+        cursor.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (document["trip_id"],))
+    trip = cursor.fetchone()
+    if not trip:
+        cursor.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    cursor.execute("SELECT id, role FROM users WHERE id = %s", (user_id,))
+    user = cursor.fetchone()
+    if not user:
+        cursor.close(); conn.close()
+        raise HTTPException(status_code=401, detail="User not found")
+
+    if user["role"] != "admin":
+        if (trip["assigned_agent_id"] != user["id"] and 
+            trip["assigned_parent_id"] != user["id"] and 
+            trip["assigned_clinician_id"] != user["id"]):
+            cursor.close(); conn.close()
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    cursor.close(); conn.close()
+    file_path = Path(".") / document["file_url"].lstrip("/")
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on server")
+    media_type = document.get("file_type") or mimetypes.guess_type(str(file_path))[0] or "application/octet-stream"
+    headers = {"Content-Disposition": f'inline; filename="{document["filename"]}"'}
+    return FileResponse(path=file_path, media_type=media_type, headers=headers)
 
 @app.delete("/api/documents/{document_id}")
 async def delete_document(document_id: int, request: Request = None, current_user: dict = Depends(get_current_user)):
@@ -1575,6 +1800,45 @@ async def mark_message_read(message_id: int, current_user: dict = Depends(get_cu
     
     return {'success': True}
 
+@app.delete("/api/trips/{trip_id}/messages")
+async def clear_trip_messages(
+    trip_id: int,
+    current_user: dict = Depends(get_current_user)
+):
+    """Clear all messages for a trip (admin only)"""
+    if current_user["role"] != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can clear chat messages"
+        )
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Verify trip exists
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    trip = cursor.fetchone()
+    
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Trip not found"
+        )
+    
+    # Delete all messages for this trip
+    cursor.execute("DELETE FROM messages WHERE trip_id = %s", (trip_id,))
+    conn.commit()
+    
+    cursor.close()
+    conn.close()
+    
+    # Emit WebSocket event to notify all connected clients
+    await sio.emit('messages_cleared', {"trip_id": trip_id}, room=f"trip_{trip_id}")
+    
+    return {"message": "All messages cleared successfully"}
+
 @app.get("/api/trips/{trip_id}/messages/unread")
 async def get_unread_count(trip_id: int, current_user: dict = Depends(get_current_user)):
     """Get count of unread messages for a trip"""
@@ -1620,6 +1884,162 @@ async def get_unread_count(trip_id: int, current_user: dict = Depends(get_curren
     
     return {'unread_count': unread_count}
 
+# ------- Milestones and Notifications -------
+
+def _get_trip(cursor, trip_id: int):
+    cursor.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
+    return cursor.fetchone()
+
+def _get_recipients(cursor, trip_id: int, event: str):
+    cursor.execute("""
+        SELECT * FROM notification_recipients
+        WHERE trip_id = %s AND event = %s
+    """, (trip_id, event))
+    return cursor.fetchall()
+
+def _send_event_emails(cursor, trip, event: str):
+    recipients = _get_recipients(cursor, trip["id"], event)
+    emails = [r["email"] for r in recipients if r.get("send_email") and r.get("email")]
+    phones = [r["phone"] for r in recipients if r.get("send_sms") and r.get("phone")]
+    print(f"[milestones] Event '{event}' recipients={emails}")
+    if not emails:
+        # still allow SMS without emails
+        pass
+    if event == "trip_started":
+        subject = f"IYT Compass: Trip Started for {trip['client_name']}"
+        html = f"<p>Trip for <strong>{trip['client_name']}</strong> has begun en route to destination.</p>"
+    elif event == "complete":
+        subject = f"IYT Compass: Transport Complete for {trip['client_name']}"
+        html = f"<p>Transport for <strong>{trip['client_name']}</strong> is complete.</p>"
+    elif event == "sixty_miles":
+        subject = f"IYT Compass: 60 Miles from Destination - {trip['client_name']}"
+        html = f"<p>The agent is within 60 miles of the destination for <strong>{trip['client_name']}</strong>.</p>"
+    else:
+        subject = f"IYT Compass Notification"
+        html = "<p>Status update.</p>"
+    sent = False
+    if emails:
+        sent = send_email(emails, subject, html, html_content_to_text(html))
+        print(f"[milestones] Event '{event}' email_sent={sent}")
+    # SMS body (plain text)
+    sms_body = html_content_to_text(html)
+    for phone in phones:
+        s = send_sms(phone, sms_body)
+        print(f"[milestones] Event '{event}' sms_sent={s} to={phone}")
+
+def html_content_to_text(html: str) -> str:
+    # naive fallback
+    import re
+    return re.sub("<[^<]+?>", "", html)
+
+@app.put("/api/trips/{trip_id}/milestones")
+async def update_milestones(trip_id: int, payload: MilestoneUpdate, current_user: dict = Depends(get_current_user)):
+    """Toggle a milestone and trigger notifications where applicable."""
+    if current_user["role"] not in ["admin", "agent"]:
+        raise HTTPException(status_code=403, detail="Only admins or assigned agents can update milestones")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    trip = _get_trip(cursor, trip_id)
+    if not trip:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if current_user["role"] == "agent" and trip["assigned_agent_id"] != current_user["id"]:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=403, detail="Not authorized for this trip")
+
+    milestone_map = {
+        1: "m1_began_route_to_pickup",
+        2: "m2_arrived_pickup",
+        3: "m3_en_route_to_destination",
+        4: "m4_arrived_dropoff",
+        5: "m5_transport_complete",
+    }
+    if payload.milestone not in milestone_map:
+        cursor.close()
+        conn.close()
+        raise HTTPException(status_code=400, detail="Invalid milestone (must be 1..5)")
+
+    # Basic skip check: if trying to set milestone >1 and previous isn't done
+    if payload.completed and payload.milestone > 1:
+        previous_done = trip.get(milestone_map[payload.milestone - 1])
+        if not previous_done and not payload.confirm:
+            cursor.close()
+            conn.close()
+            return {"needsConfirmation": True, "previousMilestone": payload.milestone - 1}
+
+    field = milestone_map[payload.milestone]
+    cursor.execute(
+        f"UPDATE trips SET {field} = %s, milestone_updated_at = NOW(), updated_at = NOW() WHERE id = %s",
+        (payload.completed, trip_id)
+    )
+    conn.commit()
+
+    # Refresh
+    trip = _get_trip(cursor, trip_id)
+
+    # Trigger notifications for certain milestones
+    if payload.completed:
+        if payload.milestone == 3:
+            _send_event_emails(cursor, trip, "trip_started")
+        if payload.milestone == 5:
+            _send_event_emails(cursor, trip, "complete")
+
+    cursor.close()
+    conn.close()
+    await sio.emit('milestone_updated', {"trip_id": trip_id, "milestone": payload.milestone, "completed": payload.completed}, room=f"trip_{trip_id}")
+    return {"success": True, "trip_id": trip_id, "milestone": payload.milestone, "completed": payload.completed}
+
+@app.get("/api/trips/{trip_id}/notifications", response_model=NotificationSettingsResponse)
+async def get_notification_settings(trip_id: int, current_user: dict = Depends(get_current_user)):
+    """Return per-trip recipients for milestone events."""
+    if current_user["role"] not in ["admin", "agent"]:
+        raise HTTPException(status_code=403, detail="Only admins or agents can view")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    trip = _get_trip(cursor, trip_id)
+    if not trip:
+        cursor.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Trip not found")
+    cursor.execute("SELECT * FROM notification_recipients WHERE trip_id = %s ORDER BY id ASC", (trip_id,))
+    rows = cursor.fetchall()
+    cursor.close(); conn.close()
+    recipients = [
+        {
+            "id": r["id"],
+            "event": r["event"],
+            "name": r.get("name"),
+            "email": r.get("email"),
+            "phone": r.get("phone"),
+            "send_email": r.get("send_email"),
+            "send_sms": r.get("send_sms"),
+        }
+        for r in rows
+    ]
+    return {"trip_id": trip_id, "recipients": recipients}
+
+@app.put("/api/trips/{trip_id}/notifications", response_model=NotificationSettingsResponse)
+async def save_notification_settings(trip_id: int, recipients: List[NotificationRecipient], current_user: dict = Depends(get_current_user)):
+    """Replace recipients list for a trip."""
+    if current_user["role"] not in ["admin", "agent"]:
+        raise HTTPException(status_code=403, detail="Only admins or agents can edit")
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    trip = _get_trip(cursor, trip_id)
+    if not trip:
+        cursor.close(); conn.close()
+        raise HTTPException(status_code=404, detail="Trip not found")
+    # Clear and reinsert for simplicity
+    cursor.execute("DELETE FROM notification_recipients WHERE trip_id = %s", (trip_id,))
+    for r in recipients:
+        cursor.execute("""
+            INSERT INTO notification_recipients (trip_id, event, name, email, phone, send_email, send_sms)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (trip_id, r.event, r.name, str(r.email) if r.email else None, r.phone, r.send_email, r.send_sms))
+    conn.commit()
+    cursor.close(); conn.close()
+    return await get_notification_settings(trip_id, current_user)
 @app.post("/api/trips/{trip_id}/chat/takeover")
 async def takeover_chat(
     trip_id: int,

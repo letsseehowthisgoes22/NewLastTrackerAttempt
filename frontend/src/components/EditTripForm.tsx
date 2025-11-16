@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getTrip, updateTrip } from '../api/trips';
+import { getTrip, updateTrip, deleteTrip } from '../api/trips';
 import { Trip, TripUpdate } from '../types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Autocomplete, useJsApiLoader } from '@react-google-maps/api';
@@ -25,6 +26,8 @@ export const EditTripForm = () => {
   const [error, setError] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [loadingTrip, setLoadingTrip] = useState(true);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [pickupAutocomplete, setPickupAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const [dropoffAutocomplete, setDropoffAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
@@ -37,6 +40,11 @@ export const EditTripForm = () => {
   const [trip, setTrip] = useState<Trip | null>(null);
   const [formData, setFormData] = useState<TripUpdate>({
     client_name: null,
+    client_age: null,
+    client_build: null,
+    transport_relevant_medical_info: null,
+    parent_guardian_name: null,
+    parent_guardian_relationship: null,
     pickup_location: null,
     dropoff_location: null,
     pickup_lat: null,
@@ -72,6 +80,11 @@ export const EditTripForm = () => {
         setTrip(tripData);
         setFormData({
           client_name: tripData.client_name,
+          client_age: tripData.client_age,
+          client_build: tripData.client_build,
+          transport_relevant_medical_info: tripData.transport_relevant_medical_info,
+          parent_guardian_name: tripData.parent_guardian_name,
+          parent_guardian_relationship: tripData.parent_guardian_relationship,
           pickup_location: tripData.pickup_location,
           dropoff_location: tripData.dropoff_location,
           pickup_lat: tripData.pickup_lat,
@@ -114,14 +127,17 @@ export const EditTripForm = () => {
   const onPickupPlaceChanged = () => {
     if (!pickupAutocomplete) return;
     const place = pickupAutocomplete.getPlace();
-    if (!place?.geometry?.location) return;
-    const location = place.geometry.location;
-    setFormData((prev) => ({
-      ...prev,
-      pickup_location: place.formatted_address || prev.pickup_location,
-      pickup_lat: location.lat(),
-      pickup_lng: location.lng(),
-    }));
+    // Only update coordinates if a valid place was selected
+    // Allow manual text editing without requiring place selection
+    if (place?.geometry?.location) {
+      const location = place.geometry.location;
+      setFormData((prev) => ({
+        ...prev,
+        pickup_location: place.formatted_address || prev.pickup_location,
+        pickup_lat: location.lat(),
+        pickup_lng: location.lng(),
+      }));
+    }
   };
 
   const onDropoffLoad = (autocomplete: google.maps.places.Autocomplete) => {
@@ -131,14 +147,17 @@ export const EditTripForm = () => {
   const onDropoffPlaceChanged = () => {
     if (!dropoffAutocomplete) return;
     const place = dropoffAutocomplete.getPlace();
-    if (!place?.geometry?.location) return;
-    const location = place.geometry.location;
-    setFormData((prev) => ({
-      ...prev,
-      dropoff_location: place.formatted_address || prev.dropoff_location,
-      dropoff_lat: location.lat(),
-      dropoff_lng: location.lng(),
-    }));
+    // Only update coordinates if a valid place was selected
+    // Allow manual text editing without requiring place selection
+    if (place?.geometry?.location) {
+      const location = place.geometry.location;
+      setFormData((prev) => ({
+        ...prev,
+        dropoff_location: place.formatted_address || prev.dropoff_location,
+        dropoff_lat: location.lat(),
+        dropoff_lng: location.lng(),
+      }));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -151,6 +170,11 @@ export const EditTripForm = () => {
 
       const payload: TripUpdate = {
         ...formData,
+        client_age: formData.client_age || null,
+        client_build: normalize(formData.client_build),
+        transport_relevant_medical_info: normalize(formData.transport_relevant_medical_info),
+        parent_guardian_name: normalize(formData.parent_guardian_name),
+        parent_guardian_relationship: normalize(formData.parent_guardian_relationship),
         agent_name: normalize(formData.agent_name),
         parent_name: normalize(formData.parent_name),
         clinician_name: normalize(formData.clinician_name),
@@ -185,21 +209,40 @@ export const EditTripForm = () => {
     }
   };
 
+  const handleDeleteTrip = async () => {
+    if (!token || !id || user?.role !== 'admin') return;
+    
+    setDeleting(true);
+    setError('');
+    
+    try {
+      await deleteTrip(token, parseInt(id));
+      navigate('/trips');
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to delete trip');
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
   if (user?.role !== 'admin' && user?.role !== 'agent') {
     return null;
   }
 
   if (loadingTrip || !trip) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <p>Loading trip data...</p>
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-800 flex items-center justify-center">
+        <div className="bg-white rounded-lg shadow-2xl p-8">
+          <p className="text-gray-700">Loading trip data...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8">
-      <Card>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-800 py-8">
+      <div className="max-w-4xl mx-auto px-4">
+        <Card className="shadow-2xl border-0">
         <CardHeader>
           <CardTitle>Edit Trip</CardTitle>
           <CardDescription>Update the transport trip details</CardDescription>
@@ -220,6 +263,62 @@ export const EditTripForm = () => {
                 onChange={(e) => setFormData({ ...formData, client_name: e.target.value })}
                 required
               />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="client_age">Age</Label>
+                <Input
+                  id="client_age"
+                  type="number"
+                  min="0"
+                  max="120"
+                  value={formData.client_age || ''}
+                  onChange={(e) => setFormData({ ...formData, client_age: e.target.value ? parseInt(e.target.value) : null })}
+                  placeholder="Age"
+                />
+              </div>
+              <div>
+                <Label htmlFor="client_build">Build</Label>
+                <Input
+                  id="client_build"
+                  value={formData.client_build || ''}
+                  onChange={(e) => setFormData({ ...formData, client_build: e.target.value || null })}
+                  placeholder="e.g., Small, Medium, Large, etc."
+                />
+              </div>
+            </div>
+
+            <div>
+              <Label htmlFor="transport_relevant_medical_info">Transport Relevant Medical Information</Label>
+              <Textarea
+                id="transport_relevant_medical_info"
+                value={formData.transport_relevant_medical_info || ''}
+                onChange={(e) => setFormData({ ...formData, transport_relevant_medical_info: e.target.value || null })}
+                placeholder="Enter any medical information relevant to transport (allergies, mobility needs, medications, etc.)"
+                rows={4}
+              />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="parent_guardian_name">Parent/Guardian Name</Label>
+                <Input
+                  id="parent_guardian_name"
+                  value={formData.parent_guardian_name || ''}
+                  onChange={(e) => setFormData({ ...formData, parent_guardian_name: e.target.value || null })}
+                  placeholder="Full name"
+                />
+              </div>
+              <div>
+                <Label htmlFor="parent_guardian_relationship">Relationship to Client</Label>
+                <Input
+                  id="parent_guardian_relationship"
+                  value={formData.parent_guardian_relationship || ''}
+                  onChange={(e) => setFormData({ ...formData, parent_guardian_relationship: e.target.value || null })}
+                  placeholder="e.g., Mother, Father, Grandmother, etc."
+                />
+              </div>
             </div>
 
             <div>
@@ -420,8 +519,57 @@ export const EditTripForm = () => {
               </Button>
             </div>
           </form>
+
+          {user?.role === 'admin' && (
+            <div className="mt-8 pt-8 border-t border-red-200">
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm font-semibold text-red-700 mb-2">Admin Actions</p>
+                  
+                  <div className="space-y-3">
+                    {/* Delete Trip Button */}
+                    <div>
+                      {!showDeleteConfirm ? (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          onClick={() => setShowDeleteConfirm(true)}
+                          disabled={deleting}
+                        >
+                          {deleting ? 'Deleting...' : 'Delete Trip'}
+                        </Button>
+                      ) : (
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            onClick={handleDeleteTrip}
+                            disabled={deleting}
+                          >
+                            {deleting ? 'Deleting...' : 'Confirm Delete Trip'}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setShowDeleteConfirm(false)}
+                            disabled={deleting}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      )}
+                      <p className="text-xs text-red-600 mt-1">
+                        Warning: This will permanently delete this trip and all associated data
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 };

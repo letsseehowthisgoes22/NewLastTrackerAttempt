@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { TripCredentialsManager } from './TripCredentialsManager';
 
 export const TripsList = () => {
   const { token, user } = useAuth();
@@ -82,35 +84,39 @@ export const TripsList = () => {
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <p>Loading trips...</p>
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-800 flex items-center justify-center">
+        <div className="bg-white rounded-lg shadow-2xl p-8">
+          <p className="text-gray-700">Loading trips...</p>
+        </div>
       </div>
     );
   }
 
-  return (
-    <div className="max-w-7xl mx-auto px-4 py-8">
-      <Card>
-        <CardHeader>
-          <div className="flex justify-between items-center">
-            <div>
-              <CardTitle>
-                {user?.role === 'admin' ? 'All Trips' : 'My Trips'}
-              </CardTitle>
-              <CardDescription>
-                {user?.role === 'admin' 
-                  ? 'Manage all transport trips in the system'
-                  : 'View trips assigned to you'}
-              </CardDescription>
-            </div>
-            {user?.role === 'admin' && (
-              <Button onClick={() => navigate('/trips/create')}>
-                Create Trip
-              </Button>
-            )}
+  if (user?.role === 'admin') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-800 py-8">
+        <div className="max-w-7xl mx-auto px-4">
+        <Tabs defaultValue="trips" className="w-full">
+          <div className="flex justify-between items-center mb-4">
+            <CardTitle className="text-2xl">
+              {user?.role === 'admin' ? 'All Trips' : 'My Trips'}
+            </CardTitle>
+            <Button onClick={() => navigate('/trips/create')}>
+              Create Trip
+            </Button>
           </div>
-        </CardHeader>
-        <CardContent>
+          <TabsList>
+            <TabsTrigger value="trips">Trips</TabsTrigger>
+            <TabsTrigger value="credentials">Trip Credentials</TabsTrigger>
+          </TabsList>
+          <TabsContent value="trips" className="mt-4">
+            <Card>
+              <CardHeader>
+                <CardDescription>
+                  Manage all transport trips in the system
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
           {error && (
             <Alert variant="destructive" className="mb-4">
               <AlertDescription>{error}</AlertDescription>
@@ -187,10 +193,124 @@ export const TripsList = () => {
                               className="flex-1"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                navigate(`/trips/${trip.id}/active`);
+                                navigate(`/trips/${trip.id}`);
                               }}
                             >
-                              {trip.status === 'in_progress' ? 'Active' : 'Start'}
+                              {trip.status === 'in_progress' ? 'Active' : 'View'}
+                            </Button>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/trips/${trip.id}/edit`);
+                            }}
+                          >
+                            Edit
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="credentials" className="mt-4">
+            <TripCredentialsManager />
+          </TabsContent>
+        </Tabs>
+        </div>
+      </div>
+    );
+  }
+
+  // Non-admin users see the regular trips list
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-emerald-800 py-8">
+      <div className="max-w-7xl mx-auto px-4">
+        <Card className="shadow-2xl border-0">
+        <CardHeader>
+          <div className="flex justify-between items-center">
+            <div>
+              <CardTitle>My Trips</CardTitle>
+              <CardDescription>
+                View trips assigned to you
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {error && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {trips.length === 0 ? (
+            <div className="text-center py-8 text-gray-500">
+              <p>No trips found.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {(Array.isArray(trips) ? trips : []).map((trip) => (
+                <Card key={trip.id} className="hover:shadow-lg transition-shadow cursor-pointer" onClick={() => navigate(`/trips/${trip.id}`)}>
+                  <CardHeader>
+                    <div className="flex justify-between items-start">
+                      <CardTitle className="text-lg">{trip.client_name}</CardTitle>
+                      <Badge className={getStatusBadgeColor(trip.status)}>
+                        {trip.status.replace('_', ' ')}
+                      </Badge>
+                    </div>
+                    <CardDescription className="text-sm text-gray-500">
+                      {getRelativeTime(trip.scheduled_start)}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2 text-sm">
+                      <div>
+                        <span className="font-medium text-gray-700">Pickup:</span>
+                        <p className="text-gray-600 truncate">{trip.pickup_location}</p>
+                      </div>
+                      <div>
+                        <span className="font-medium text-gray-700">Dropoff:</span>
+                        <p className="text-gray-600 truncate">{trip.dropoff_location}</p>
+                      </div>
+                      <div>
+                        <span className="font-medium text-gray-700">Date:</span>
+                        <p className="text-gray-600">{formatDate(trip.scheduled_start)}</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2 mt-4">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="flex-1"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/trips/${trip.id}`);
+                        }}
+                      >
+                        View Details
+                      </Button>
+                      {(user?.role === 'admin' || user?.role === 'agent') && (
+                        <>
+                          {(trip.status === 'scheduled' || trip.status === 'in_progress') && (
+                            <Button
+                              variant={trip.status === 'in_progress' ? 'default' : 'secondary'}
+                              size="sm"
+                              className="flex-1"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/trips/${trip.id}`);
+                              }}
+                            >
+                              {trip.status === 'in_progress' ? 'Active' : 'View'}
                             </Button>
                           )}
                           <Button
@@ -214,6 +334,7 @@ export const TripsList = () => {
           )}
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 };

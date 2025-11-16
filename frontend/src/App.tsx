@@ -4,6 +4,7 @@ import { LoginPage } from './components/LoginPage';
 import { Dashboard } from './components/Dashboard';
 import { TripsList } from './components/TripsList';
 import { TripDetail } from './components/TripDetail';
+import TripNotificationSettings from './components/TripNotificationSettings';
 import { CreateTripForm } from './components/CreateTripForm';
 import { EditTripForm } from './components/EditTripForm';
 import { ActiveTrip } from './components/ActiveTrip';
@@ -73,6 +74,14 @@ function AppContent() {
         element={
           <ProtectedRoute>
             <TripDetail />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/trips/:id/notifications"
+        element={
+          <ProtectedRoute>
+            <TripNotificationSettings />
           </ProtectedRoute>
         }
       />

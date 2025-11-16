@@ -1,0 +1,71 @@
+/* Pulsing animation for moving agent marker */
+.pulsing-marker {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.pulsing-marker .pulse-container {
+  position: relative;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pulsing-marker .pulse-ring,
+.pulsing-marker .pulse-ring-delay {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 3px solid #4285F4;
+  opacity: 0;
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  top: 50%;
+  left: 50%;
+  margin-top: -10px;
+  margin-left: -10px;
+}
+
+.pulsing-marker .pulse-ring-delay {
+  animation-delay: 1s;
+  border-color: #34A853;
+}
+
+@keyframes pulse {
+  0% {
+    transform: scale(0.8);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(3);
+    opacity: 0;
+  }
+}
+
+/* Moving dot - the actual marker */
+.pulsing-marker .moving-dot {
+  position: relative;
+  z-index: 10;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #4285F4;
+  border: 3px solid white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 0 2px #4285F4;
+  animation: dot-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes dot-pulse {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 0 0 2px #4285F4;
+  }
+  50% {
+    transform: scale(1.2);
+    box-shadow: 0 2px 12px rgba(66, 133, 244, 0.6), 0 0 0 4px rgba(66, 133, 244, 0.3);
+  }
+}
+

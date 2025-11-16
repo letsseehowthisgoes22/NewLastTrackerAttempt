@@ -22,6 +22,11 @@ export interface AuthContextType {
 export interface Trip {
   id: number;
   client_name: string;
+  client_age: number | null;
+  client_build: string | null;
+  transport_relevant_medical_info: string | null;
+  parent_guardian_name: string | null;
+  parent_guardian_relationship: string | null;
   pickup_location: string;
   dropoff_location: string;
   pickup_lat: number | null;
@@ -55,10 +60,35 @@ export interface Trip {
   chat_taken_over_by?: number | null;
   chat_takeover_at?: string | null;
   location_sharing_enabled?: boolean;
+  // milestones
+  m1_began_route_to_pickup?: boolean;
+  m2_arrived_pickup?: boolean;
+  m3_en_route_to_destination?: boolean;
+  m4_arrived_dropoff?: boolean;
+  m5_transport_complete?: boolean;
+  milestone_updated_at?: string | null;
+  notified_sixty_miles?: boolean;
+}
+
+export type MilestoneNumber = 1 | 2 | 3 | 4 | 5;
+
+export interface NotificationRecipient {
+  id?: number;
+  event: 'trip_started' | 'sixty_miles' | 'complete';
+  name?: string;
+  email?: string;
+  phone?: string;
+  send_email: boolean;
+  send_sms: boolean;
 }
 
 export interface TripCreate {
   client_name: string;
+  client_age: number | null;
+  client_build: string | null;
+  transport_relevant_medical_info: string | null;
+  parent_guardian_name: string | null;
+  parent_guardian_relationship: string | null;
   pickup_location: string;
   dropoff_location: string;
   pickup_lat: number | null;
@@ -83,6 +113,11 @@ export interface TripCreate {
 
 export interface TripUpdate {
   client_name?: string | null;
+  client_age?: number | null;
+  client_build?: string | null;
+  transport_relevant_medical_info?: string | null;
+  parent_guardian_name?: string | null;
+  parent_guardian_relationship?: string | null;
   pickup_location?: string | null;
   dropoff_location?: string | null;
   pickup_lat?: number | null;

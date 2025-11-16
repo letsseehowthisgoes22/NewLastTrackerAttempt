@@ -71,7 +71,24 @@ def init_db():
         ADD COLUMN IF NOT EXISTS chat_admin_takeover BOOLEAN DEFAULT FALSE,
         ADD COLUMN IF NOT EXISTS chat_taken_over_by INTEGER REFERENCES users(id),
         ADD COLUMN IF NOT EXISTS chat_takeover_at TIMESTAMP,
-        ADD COLUMN IF NOT EXISTS location_sharing_enabled BOOLEAN DEFAULT TRUE;
+        ADD COLUMN IF NOT EXISTS location_sharing_enabled BOOLEAN DEFAULT TRUE,
+        ADD COLUMN IF NOT EXISTS client_age INTEGER,
+        ADD COLUMN IF NOT EXISTS client_build VARCHAR(100),
+        ADD COLUMN IF NOT EXISTS transport_relevant_medical_info TEXT,
+        ADD COLUMN IF NOT EXISTS parent_guardian_name VARCHAR(255),
+        ADD COLUMN IF NOT EXISTS parent_guardian_relationship VARCHAR(100);
+    """)
+
+    # Milestones and 60-mile notification flags
+    cursor.execute("""
+        ALTER TABLE trips 
+        ADD COLUMN IF NOT EXISTS m1_began_route_to_pickup BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS m2_arrived_pickup BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS m3_en_route_to_destination BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS m4_arrived_dropoff BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS m5_transport_complete BOOLEAN DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS milestone_updated_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS notified_sixty_miles BOOLEAN DEFAULT FALSE;
     """)
     
     cursor.execute("""
@@ -161,6 +178,21 @@ def init_db():
             sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             success BOOLEAN,
             error_message TEXT
+        );
+    """)
+    
+    # Per-trip recipients for milestone events
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notification_recipients (
+            id SERIAL PRIMARY KEY,
+            trip_id INTEGER NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+            event VARCHAR(50) NOT NULL, -- 'trip_started' | 'sixty_miles' | 'complete'
+            name VARCHAR(255),
+            email VARCHAR(255),
+            phone VARCHAR(50),
+            send_email BOOLEAN DEFAULT TRUE,
+            send_sms BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
     """)
     

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { getMessages, Message, getTrip, takeoverChat, releaseChat } from '../api/trips';
+import { getMessages, Message, getTrip, takeoverChat, releaseChat, clearTripMessages } from '../api/trips';
 import { useAuth } from '../context/AuthContext';
 
 interface TripChatProps {
@@ -16,11 +16,13 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
   const [typingUsers, setTypingUsers] = useState<Array<{user_id: number, name: string}>>([]);
   const [connected, setConnected] = useState(false);
   const [chatTakenOver, setChatTakenOver] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearingChat, setClearingChat] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const currentUserRole = user?.role || '';
-  const WS_URL = import.meta.env.VITE_WS_URL || 'http://10.201.82.252:8000';
+  const WS_URL = import.meta.env.VITE_WS_URL || import.meta.env.VITE_API_URL || 'http://10.201.82.252:8000';
 
   useEffect(() => {
     if (!token || !tripId) return;
@@ -91,6 +93,13 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
     socket.on('chat_takeover', (data: { trip_id: number, taken_over: boolean, admin_name?: string }) => {
       console.log('Chat takeover event:', data);
       setChatTakenOver(data.taken_over);
+    });
+
+    socket.on('messages_cleared', (data: { trip_id: number }) => {
+      console.log('Messages cleared event:', data);
+      if (data.trip_id === tripId) {
+        setMessages([]);
+      }
     });
 
     fetchInitialMessages();
@@ -242,6 +251,24 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
     }
   };
 
+  const handleClearChat = async () => {
+    if (!token || currentUserRole !== 'admin') return;
+    
+    setClearingChat(true);
+    setError(null);
+    
+    try {
+      await clearTripMessages(token, tripId);
+      setMessages([]);
+      setShowClearConfirm(false);
+    } catch (error: any) {
+      console.error('Failed to clear chat:', error);
+      setError('Failed to clear chat messages. Please try again.');
+    } finally {
+      setClearingChat(false);
+    }
+  };
+
   return (
     <div className="trip-chat">
       <div className="chat-header">
@@ -261,6 +288,32 @@ const TripChat: React.FC<TripChatProps> = ({ tripId }) => {
             <button onClick={handleRelease} className="btn-release">
               Release Chat
             </button>
+          )}
+          {!showClearConfirm ? (
+            <button 
+              onClick={() => setShowClearConfirm(true)} 
+              className="btn-clear-chat"
+              disabled={clearingChat}
+            >
+              {clearingChat ? 'Clearing...' : 'Clear Chat'}
+            </button>
+          ) : (
+            <div className="clear-chat-confirm">
+              <button 
+                onClick={handleClearChat} 
+                className="btn-clear-confirm"
+                disabled={clearingChat}
+              >
+                {clearingChat ? 'Clearing...' : 'Confirm Clear'}
+              </button>
+              <button 
+                onClick={() => setShowClearConfirm(false)} 
+                className="btn-clear-cancel"
+                disabled={clearingChat}
+              >
+                Cancel
+              </button>
+            </div>
           )}
         </div>
       )}
