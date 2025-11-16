@@ -192,8 +192,33 @@ def init_db():
             phone VARCHAR(50),
             send_email BOOLEAN DEFAULT TRUE,
             send_sms BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (trip_id, event, email, phone)
         );
+    """)
+    
+    # Default notification templates for each event type
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS notification_templates (
+            id SERIAL PRIMARY KEY,
+            event VARCHAR(50) UNIQUE NOT NULL, -- 'trip_started' | 'sixty_miles' | 'complete'
+            subject_template TEXT NOT NULL,
+            body_html_template TEXT NOT NULL,
+            body_text_template TEXT NOT NULL,
+            is_default BOOLEAN DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    
+    # Insert default templates if they don't exist
+    cursor.execute("""
+        INSERT INTO notification_templates (event, subject_template, body_html_template, body_text_template)
+        VALUES 
+            ('trip_started', 'IYT Compass: Trip Started for {client_name}', '<p>Trip for <strong>{client_name}</strong> has begun en route to destination.</p>', 'Trip for {client_name} has begun en route to destination.'),
+            ('sixty_miles', 'IYT Compass: 60 Miles from Destination - {client_name}', '<p>The agent is within 60 miles of the destination for <strong>{client_name}</strong>.</p>', 'The agent is within 60 miles of the destination for {client_name}.'),
+            ('complete', 'IYT Compass: Transport Complete for {client_name}', '<p>Transport for <strong>{client_name}</strong> is complete.</p>', 'Transport for {client_name} is complete.')
+        ON CONFLICT (event) DO NOTHING;
     """)
     
     cursor.execute("""
