@@ -28,8 +28,9 @@ export const ActiveTrip = () => {
       try {
         const data = await getTrip(token, parseInt(id));
         setTrip(data);
-        
-        if (data.status === 'in_progress') {
+
+        // Only start tracking for agents, never for admins or clinicians
+        if (data.status === 'in_progress' && user?.role === 'agent') {
           startTracking();
         }
       } catch (err: any) {
@@ -44,7 +45,7 @@ export const ActiveTrip = () => {
     return () => {
       stopTracking();
     };
-  }, [token, id]);
+  }, [token, id, user]);
 
   const sendLocationToBackend = async (latitude: number, longitude: number, accuracy?: number) => {
     if (!token || !id) return;
@@ -63,6 +64,12 @@ export const ActiveTrip = () => {
   };
 
   const startTracking = () => {
+    // CRITICAL: Only agents should track location, never admins or clinicians
+    if (user?.role !== 'agent') {
+      console.log('Location tracking skipped: user is not an agent');
+      return;
+    }
+
     if (!navigator.geolocation) {
       setError('Geolocation is not supported by your browser');
       return;
@@ -124,6 +131,12 @@ export const ActiveTrip = () => {
 
   const handleStartTrip = async () => {
     if (!token || !trip) return;
+
+    // Only agents can start trip tracking
+    if (user?.role !== 'agent') {
+      setError('Only transport agents can start trip tracking');
+      return;
+    }
 
     try {
       await updateTrip(token, trip.id, { status: 'in_progress' });
