@@ -26,6 +26,7 @@ from app.rate_limiter import rate_limiter
 from app.notifications import send_email, send_sms
 import socketio
 import html
+import math
 
 app = FastAPI()
 
@@ -1262,13 +1263,13 @@ async def post_location(trip_id: int, location_data: LocationUpdate, current_use
     user_id = current_user["id"]
     user_role = current_user["role"]
     
-    # Verify user is the assigned agent or admin
-    if user_role != "admin" and trip["assigned_agent_id"] != user_id:
+    # CRITICAL: Only the assigned agent can post location updates (NOT admins)
+    if user_role != "agent" or trip["assigned_agent_id"] != user_id:
         cursor.close()
         conn.close()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the assigned agent can post location updates"
+            detail="Only the assigned transport agent can post location updates"
         )
 
     if "location_sharing_enabled" in trip.keys() and trip["location_sharing_enabled"] is False:
@@ -1321,6 +1322,36 @@ async def post_location(trip_id: int, location_data: LocationUpdate, current_use
             WHERE id = %s
         """, (trip_id,))
     
+    # Check for 60-mile notification (automatic)
+    # Only check if:
+    # 1. Trip has dropoff coordinates
+    # 2. Not already notified
+    # 3. Trip is in progress
+    if (trip.get("dropoff_lat") and trip.get("dropoff_lng") and 
+        trip.get("notified_sixty_miles") is False and
+        trip["status"] in ["in_progress", "active"]):
+        
+        agent_lat = float(location_data.latitude)
+        agent_lng = float(location_data.longitude)
+        dest_lat = float(trip["dropoff_lat"])
+        dest_lng = float(trip["dropoff_lng"])
+        
+        distance_miles = calculate_distance_miles(agent_lat, agent_lng, dest_lat, dest_lng)
+        
+        if distance_miles <= 60:
+            print(f"[60-mile] Trip {trip_id}: Agent is {distance_miles:.2f} miles from destination. Triggering notification.")
+            
+            # Mark as notified BEFORE sending (to prevent duplicate sends)
+            cursor.execute("""
+                UPDATE trips 
+                SET notified_sixty_miles = TRUE, updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+            """, (trip_id,))
+            
+            # Send notification (this uses the cursor but doesn't need a commit)
+            _send_event_emails(cursor, trip, "sixty_miles")
+    
+    # Single commit for all updates
     conn.commit()
     cursor.close()
     conn.close()
@@ -1931,6 +1962,15 @@ def html_content_to_text(html: str) -> str:
     # naive fallback
     import re
     return re.sub("<[^<]+?>", "", html)
+
+def calculate_distance_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculate distance between two coordinates using Haversine formula. Returns distance in miles."""
+    R = 3959  # Earth's radius in miles
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
 
 @app.put("/api/trips/{trip_id}/milestones")
 async def update_milestones(trip_id: int, payload: MilestoneUpdate, current_user: dict = Depends(get_current_user)):
