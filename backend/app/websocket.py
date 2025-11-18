@@ -97,28 +97,36 @@ async def subscribe_trip(sid, data):
         print(f'Client {sid} subscribed to trip {trip_id}')
         await sio.emit('subscribed', {'trip_id': trip_id}, to=sid)
         
-        # Send current location immediately if available
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT *, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - timestamp)) as seconds_ago
-            FROM location_updates 
-            WHERE trip_id = %s 
-            ORDER BY timestamp DESC 
-            LIMIT 1
-        """, (trip_id,))
-        latest_location = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
-        if latest_location:
-            await sio.emit('location_update', {
-                'latitude': float(latest_location['latitude']),
-                'longitude': float(latest_location['longitude']),
-                'accuracy': float(latest_location['accuracy']) if latest_location['accuracy'] else None,
-                'timestamp': latest_location['timestamp'].isoformat(),
-                'seconds_ago': int(latest_location['seconds_ago'])
-            }, to=sid)
+        # Send current location immediately if available (only recent and from assigned agent)
+        assigned_agent_id = trip.get('assigned_agent_id')
+        if assigned_agent_id:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            # Only get location updates that are:
+            # 1. From the assigned agent (not from admins or other users)
+            # 2. Recent (within the last 2 hours = 7200 seconds)
+            cursor.execute("""
+                SELECT lu.*, EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - lu.timestamp)) as seconds_ago
+                FROM location_updates lu
+                WHERE lu.trip_id = %s 
+                  AND lu.agent_id = %s
+                  AND lu.timestamp > CURRENT_TIMESTAMP - INTERVAL '2 hours'
+                ORDER BY lu.timestamp DESC 
+                LIMIT 1
+            """, (trip_id, assigned_agent_id))
+            latest_location = cursor.fetchone()
+            cursor.close()
+            conn.close()
+            
+            # Only send if location exists, is recent, and from the assigned agent
+            if latest_location and latest_location.get('seconds_ago') is not None and latest_location['seconds_ago'] < 7200:
+                await sio.emit('location_update', {
+                    'latitude': float(latest_location['latitude']),
+                    'longitude': float(latest_location['longitude']),
+                    'accuracy': float(latest_location['accuracy']) if latest_location['accuracy'] else None,
+                    'timestamp': latest_location['timestamp'].isoformat(),
+                    'seconds_ago': int(latest_location['seconds_ago'])
+                }, to=sid)
     
     except Exception as e:
         print(f'Error in subscribe_trip: {e}')

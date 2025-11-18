@@ -31,6 +31,10 @@ export const ActiveTrip = () => {
         const data = await getTrip(token, parseInt(id));
         setTrip(data);
         
+        // Only start tracking for agents, never for admins or clinicians
+        if (data.status === 'in_progress' && user?.role === 'agent') {
+          startTracking();
+        }
       } catch (err: any) {
         setError(err.response?.data?.detail || 'Failed to load trip details');
       } finally {
@@ -43,27 +47,9 @@ export const ActiveTrip = () => {
     return () => {
       stopTracking();
     };
-  }, [token, id]);
+  }, [token, id, user]);
 
-  useEffect(() => {
-    if (!trip) return;
-
-    const privilegedUser = user?.role === 'admin' || user?.role === 'agent';
-    const sharingEnabled = trip.location_sharing_enabled !== false;
-    const shouldTrack = privilegedUser && trip.status === 'in_progress' && sharingEnabled;
-
-    if (shouldTrack && !isTracking) {
-      startTracking();
-    } else if ((!shouldTrack || !sharingEnabled) && isTracking) {
-      stopTracking();
-    }
-
-    if (!sharingEnabled) {
-      setCurrentLocation(null);
-      setLastUpdate(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trip, user?.role, isTracking]);
+  // Removed auto-start useEffect - tracking is now only started explicitly for agents in fetchTrip
 
   const sendLocationToBackend = async (latitude: number, longitude: number, accuracy?: number) => {
     if (!token || !id || trip?.location_sharing_enabled === false) return;
@@ -87,9 +73,21 @@ export const ActiveTrip = () => {
   };
 
   const startTracking = () => {
+    // CRITICAL: Check sessionStorage flag set on login FIRST
+    if (sessionStorage.getItem('location_tracking_blocked') === 'true') {
+      const reason = sessionStorage.getItem('location_blocked_reason') || 'Unknown';
+      console.warn('[Location] Blocked by auth system:', reason);
+      return;
+    }
+    
+    // CRITICAL: Only agents should track location, never admins or clinicians
+    if (user?.role !== 'agent') {
+      console.log('Location tracking skipped: user is not an agent');
+      return;
+    }
+
     if (isTracking) return;
     if (trip?.location_sharing_enabled === false) return;
-    if (user?.role !== 'admin' && user?.role !== 'agent') return;
 
     if (!navigator.geolocation) {
       setError('Geolocation is not supported by your browser');
@@ -153,6 +151,12 @@ export const ActiveTrip = () => {
   };
 
   const handleStartTrip = async () => {
+    // Only agents can start trip tracking
+    if (user?.role !== 'agent') {
+      setError('Only transport agents can start trip tracking');
+      return;
+    }
+
     if (!token || !trip) return;
 
     try {

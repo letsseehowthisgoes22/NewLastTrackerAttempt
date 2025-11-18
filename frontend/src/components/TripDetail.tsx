@@ -24,6 +24,11 @@ export const TripDetail = () => {
   const watchIdRef = useRef<number | null>(null);
   const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
   const [isTracking, setIsTracking] = useState(false);
+  const [locationPermissionStatus, setLocationPermissionStatus] = useState<string>('unknown');
+  
+  // Silent audio hack state variables
+  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+  const [oscillator, setOscillator] = useState<OscillatorNode | null>(null);
 
   useEffect(() => {
     const fetchTrip = async () => {
@@ -41,26 +46,96 @@ export const TripDetail = () => {
 
     fetchTrip();
 
+    // CRITICAL: Immediately stop any tracking if user is not an agent
+    if (user && user.role !== 'agent') {
+      console.log('[Location] Stopping any active tracking - user is not agent:', user.role);
+      stopLocationTracking();
+    }
+
     // Cleanup: stop tracking when component unmounts
     return () => {
       stopLocationTracking();
     };
-  }, [token, id]);
+  }, [token, id, user?.role]);
+
+  // CRITICAL: Immediately stop tracking if user is not an agent (on mount or role change)
+  useEffect(() => {
+    if (user && user.role !== 'agent') {
+      // Force stop immediately, don't wait for isTracking state
+      console.log('[Location] Force stopping - user is not agent:', user.role);
+      if (watchIdRef.current !== null) {
+        navigator.geolocation?.clearWatch(watchIdRef.current);
+        watchIdRef.current = null;
+      }
+      if (intervalIdRef.current !== null) {
+        clearInterval(intervalIdRef.current);
+        intervalIdRef.current = null;
+      }
+      setIsTracking(false);
+      // Stop audio if running
+      if (oscillator) {
+        try {
+          oscillator.stop();
+        } catch (e) {}
+      }
+      if (audioContext) {
+        try {
+          audioContext.close();
+        } catch (e) {}
+      }
+      setOscillator(null);
+      setAudioContext(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.role]);
 
   // Notifications moved to dedicated page
 
-  // Start/stop location tracking based on trip status and location sharing
+  // Check location permission status (optional - don't interfere with prompt)
   useEffect(() => {
-    if (!trip || !id || !token) return;
+    if (!navigator.geolocation) {
+      setLocationPermissionStatus('not-supported');
+      return;
+    }
 
-    const isAgent = user?.role === 'admin' || user?.role === 'agent';
-    const shouldTrack = isAgent && 
-                       trip.status === 'in_progress' && 
+    // Only check if permissions API is available (don't force it)
+    if ('permissions' in navigator) {
+      navigator.permissions.query({ name: 'geolocation' as PermissionName }).then((result) => {
+        setLocationPermissionStatus(result.state);
+        result.onchange = () => {
+          setLocationPermissionStatus(result.state);
+        };
+      }).catch(() => {
+        // Silently fail - don't interfere
+        setLocationPermissionStatus('unknown');
+      });
+    }
+  }, []);
+
+  // Start/stop location tracking based on trip status and location sharing
+  // CRITICAL FIX: Only agents should track location, NOT admins or clinicians
+  useEffect(() => {
+    if (!trip || !id || !token || !user) return;
+
+    // ONLY agents should track location - admins and clinicians only VIEW
+    // Triple-check: user must exist, be an agent, and trip must be active
+    if (user.role !== 'agent') {
+      // If not an agent, make sure tracking is stopped
+      if (isTracking) {
+        console.log('[Location] Stopping tracking - user is not an agent:', user.role);
+        stopLocationTracking();
+      }
+      return; // Exit early for non-agents
+    }
+
+    const shouldTrack = trip.status === 'in_progress' && 
                        trip.location_sharing_enabled !== false;
 
     if (shouldTrack && !isTracking) {
+      console.log('[Location] Starting tracking for agent');
       startLocationTracking();
     } else if (!shouldTrack && isTracking) {
+      console.log('[Location] Stopping tracking - conditions not met');
       stopLocationTracking();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -87,9 +162,20 @@ export const TripDetail = () => {
   };
 
   const startLocationTracking = () => {
+    // CRITICAL: Check sessionStorage flag set on login FIRST
+    if (sessionStorage.getItem('location_tracking_blocked') === 'true') {
+      const reason = sessionStorage.getItem('location_blocked_reason') || 'Unknown';
+      console.warn('[Location] Blocked by auth system:', reason);
+      return;
+    }
+    
     if (isTracking) return;
     if (trip?.location_sharing_enabled === false) return;
-    if (user?.role !== 'admin' && user?.role !== 'agent') return;
+    // CRITICAL FIX: Only agents can track location, NOT admins or clinicians
+    if (!user || user.role !== 'agent') {
+      console.warn('[Location] Blocked - user role is not agent:', user?.role);
+      return;
+    }
 
     if (!navigator.geolocation) {
       setError('Geolocation is not supported by your browser');
@@ -98,8 +184,9 @@ export const TripDetail = () => {
 
     console.log('Starting location tracking...');
     setIsTracking(true);
+    setError(''); // Clear any previous errors
 
-    // Request permission and get initial location
+    // Request permission and get initial location - simple like old code
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude, accuracy } = position.coords;
@@ -107,7 +194,7 @@ export const TripDetail = () => {
       },
       (error) => {
         console.error('Geolocation error:', error);
-        setError(`Location permission denied: ${error.message}. Please allow location access in your browser settings.`);
+        setError(`Location permission denied: ${error.message}. Please allow location access.`);
         setIsTracking(false);
       },
       {
@@ -158,6 +245,24 @@ export const TripDetail = () => {
     }, 30000); // 30 seconds
 
     intervalIdRef.current = intervalId;
+
+    // Start silent audio to keep app alive in background
+    try {
+      const ctx = new AudioContext();
+      const osc = ctx.createOscillator();
+      osc.frequency.value = 20000; // Inaudible frequency (20kHz)
+      const gainNode = ctx.createGain();
+      gainNode.gain.value = 0.0001; // Nearly silent
+      osc.connect(gainNode).connect(ctx.destination);
+      osc.start();
+
+      setAudioContext(ctx);
+      setOscillator(osc);
+      console.log('Silent audio started to keep GPS tracking alive in background');
+    } catch (err) {
+      console.warn('Failed to start silent audio (may not be supported):', err);
+      // Don't fail tracking if audio fails - it's just a hack
+    }
   };
 
   const stopLocationTracking = () => {
@@ -174,6 +279,21 @@ export const TripDetail = () => {
     if (intervalIdRef.current !== null) {
       clearInterval(intervalIdRef.current);
       intervalIdRef.current = null;
+    }
+
+    // Stop silent audio
+    try {
+      if (oscillator) {
+        oscillator.stop();
+      }
+      if (audioContext) {
+        audioContext.close();
+      }
+      setOscillator(null);
+      setAudioContext(null);
+      console.log('Silent audio stopped');
+    } catch (err) {
+      console.warn('Error stopping silent audio:', err);
     }
   };
 
@@ -244,16 +364,16 @@ export const TripDetail = () => {
           ← Back to Trips
         </Button>
         <div className="flex gap-2">
-          {(user?.role === 'admin' || user?.role === 'agent') && (
+        {(user?.role === 'admin' || user?.role === 'agent') && (
             <>
               <Button variant="secondary" onClick={() => navigate(`/trips/${trip.id}/notifications`)}>
                 Notification Settings
               </Button>
-              <Button onClick={() => navigate(`/trips/${trip.id}/edit`)}>
-                Edit Trip
-              </Button>
+          <Button onClick={() => navigate(`/trips/${trip.id}/edit`)}>
+            Edit Trip
+          </Button>
             </>
-          )}
+        )}
         </div>
       </div>
 
@@ -311,7 +431,7 @@ export const TripDetail = () => {
                     </dd>
                   </div>
                 )}
-              </dl>
+            </dl>
             </div>
           </div>
 
@@ -396,15 +516,15 @@ export const TripDetail = () => {
                 }
                 
                 return (
-                  <TripMap
+                <TripMap
                     pickupLat={pickupLat}
                     pickupLng={pickupLng}
                     dropoffLat={dropoffLat}
                     dropoffLng={dropoffLng}
-                    pickupLocation={trip.pickup_location}
-                    dropoffLocation={trip.dropoff_location}
-                    tripId={trip.id}
-                    isLive={trip.status === 'in_progress'}
+                  pickupLocation={trip.pickup_location}
+                  dropoffLocation={trip.dropoff_location}
+                  tripId={trip.id}
+                  isLive={trip.status === 'in_progress'}
                     locationSharingEnabled={trip.location_sharing_enabled !== false}
                     onSharingStatusChange={(enabled) =>
                       setTrip((prev) => prev ? { ...prev, location_sharing_enabled: enabled } : null)
@@ -504,9 +624,10 @@ export const TripDetail = () => {
               </div>
             )}
             
-            {trip.status === 'in_progress' && (user?.role === 'admin' || user?.role === 'agent') && (
+            {/* CRITICAL FIX: Only show tracking controls to AGENTS, not admins */}
+            {trip.status === 'in_progress' && user?.role === 'agent' && (
               <div className="space-y-4">
-                {/* Begin/Pause Trip Tracking */}
+                {/* Begin/Pause Trip Tracking - ONLY for agents */}
                 {trip.location_sharing_enabled === false ? (
                   <Button
                     onClick={async () => {
@@ -552,29 +673,36 @@ export const TripDetail = () => {
                     {locationToggleLoading ? 'Pausing...' : '⏸ Pause Trip Tracking'}
                   </Button>
                 )}
-                
-                {/* End Trip - Admin only */}
-                {user?.role === 'admin' && (
-                  <Button
-                    onClick={async () => {
-                      if (!token || !trip) return;
-                      if (!confirm('Are you sure you want to end this trip? This action cannot be undone.')) {
-                        return;
-                      }
-                      try {
-                        await updateTrip(token, trip.id, { status: 'completed' });
-                        navigate('/trips');
-                      } catch (err: any) {
-                        setError(err.response?.data?.detail || 'Failed to end trip');
-                      }
-                    }}
-                    className="w-full"
-                    size="lg"
-                    variant="destructive"
-                  >
-                    🛑 End Trip
-                  </Button>
-                )}
+              </div>
+            )}
+
+            {/* Admin can still end trips */}
+            {trip.status === 'in_progress' && user?.role === 'admin' && (
+              <div className="space-y-4">
+                <Alert>
+                  <AlertDescription>
+                    Viewing trip in progress. The map shows the agent's current location from the transport vehicle.
+                  </AlertDescription>
+                </Alert>
+                <Button
+                  onClick={async () => {
+                    if (!token || !trip) return;
+                    if (!confirm('Are you sure you want to end this trip? This action cannot be undone.')) {
+                      return;
+                    }
+                    try {
+                      await updateTrip(token, trip.id, { status: 'completed' });
+                      navigate('/trips');
+                    } catch (err: any) {
+                      setError(err.response?.data?.detail || 'Failed to end trip');
+                    }
+                  }}
+                  className="w-full"
+                  size="lg"
+                  variant="destructive"
+                >
+                  🛑 End Trip
+                </Button>
               </div>
             )}
 
