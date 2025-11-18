@@ -1263,7 +1263,8 @@ async def post_location(trip_id: int, location_data: LocationUpdate, current_use
     user_id = current_user["id"]
     user_role = current_user["role"]
     
-    # CRITICAL: Only the assigned agent can post location updates (NOT admins)
+    # CRITICAL: Only the assigned agent can post location updates
+    # Blocks: admins, providers/clinicians, parents, and unassigned agents
     if user_role != "agent" or trip["assigned_agent_id"] != user_id:
         cursor.close()
         conn.close()
