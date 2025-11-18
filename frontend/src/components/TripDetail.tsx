@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { DocumentsSection } from './DocumentsSection';
 import { TripMap } from './TripMap';
 import TripChat from './TripChat';
@@ -28,6 +30,50 @@ export const TripDetail = () => {
   // Silent audio hack state variables
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
   const [oscillator, setOscillator] = useState<OscillatorNode | null>(null);
+  // Toggle for background tracking (silent audio hack)
+  const [enableBackgroundTracking, setEnableBackgroundTracking] = useState<boolean>(() => {
+    const saved = localStorage.getItem('enableBackgroundTracking');
+    return saved === 'true';
+  });
+
+  // Save toggle state to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('enableBackgroundTracking', enableBackgroundTracking.toString());
+    // If toggle is disabled while tracking, stop audio
+    if (!enableBackgroundTracking && isTracking) {
+      try {
+        if (oscillator) {
+          oscillator.stop();
+        }
+        if (audioContext) {
+          audioContext.close();
+        }
+        setOscillator(null);
+        setAudioContext(null);
+        console.log('Silent audio stopped (toggle disabled)');
+      } catch (err) {
+        console.warn('Error stopping silent audio:', err);
+      }
+    }
+    // If toggle is enabled while tracking, start audio
+    if (enableBackgroundTracking && isTracking && !audioContext) {
+      try {
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        osc.frequency.value = 20000;
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = 0.0001;
+        osc.connect(gainNode).connect(ctx.destination);
+        osc.start();
+        setAudioContext(ctx);
+        setOscillator(osc);
+        console.log('Silent audio started (toggle enabled)');
+      } catch (err) {
+        console.warn('Failed to start silent audio:', err);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enableBackgroundTracking]);
 
   useEffect(() => {
     const fetchTrip = async () => {
@@ -225,22 +271,24 @@ export const TripDetail = () => {
 
     intervalIdRef.current = intervalId;
 
-    // Start silent audio to keep app alive in background
-    try {
-      const ctx = new AudioContext();
-      const osc = ctx.createOscillator();
-      osc.frequency.value = 20000; // Inaudible frequency (20kHz)
-      const gainNode = ctx.createGain();
-      gainNode.gain.value = 0.0001; // Nearly silent
-      osc.connect(gainNode).connect(ctx.destination);
-      osc.start();
+    // Start silent audio to keep app alive in background (only if toggle is enabled)
+    if (enableBackgroundTracking) {
+      try {
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        osc.frequency.value = 20000; // Inaudible frequency (20kHz)
+        const gainNode = ctx.createGain();
+        gainNode.gain.value = 0.0001; // Nearly silent
+        osc.connect(gainNode).connect(ctx.destination);
+        osc.start();
 
-      setAudioContext(ctx);
-      setOscillator(osc);
-      console.log('Silent audio started to keep GPS tracking alive in background');
-    } catch (err) {
-      console.warn('Failed to start silent audio (may not be supported):', err);
-      // Don't fail tracking if audio fails - it's just a hack
+        setAudioContext(ctx);
+        setOscillator(osc);
+        console.log('Silent audio started to keep GPS tracking alive in background');
+      } catch (err) {
+        console.warn('Failed to start silent audio (may not be supported):', err);
+        // Don't fail tracking if audio fails - it's just a hack
+      }
     }
   };
 
@@ -606,6 +654,17 @@ export const TripDetail = () => {
             {/* CRITICAL FIX: Only show tracking controls to AGENTS, not admins */}
             {trip.status === 'in_progress' && user?.role === 'agent' && (
               <div className="space-y-4">
+                {/* Background Tracking Toggle */}
+                <div className="flex items-center space-x-2 p-3 border rounded-md bg-gray-50">
+                  <Checkbox
+                    id="background-tracking"
+                    checked={enableBackgroundTracking}
+                    onCheckedChange={(checked) => setEnableBackgroundTracking(checked === true)}
+                  />
+                  <Label htmlFor="background-tracking" className="text-sm font-medium cursor-pointer">
+                    Enable Background Tracking (keeps GPS active when browser is in background)
+                  </Label>
+                </div>
                 {/* Begin/Pause Trip Tracking - ONLY for agents */}
                 {trip.location_sharing_enabled === false ? (
                   <Button
