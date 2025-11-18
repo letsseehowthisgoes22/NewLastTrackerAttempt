@@ -24,7 +24,6 @@ export const TripDetail = () => {
   const watchIdRef = useRef<number | null>(null);
   const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
   const [isTracking, setIsTracking] = useState(false);
-  const [locationPermissionStatus, setLocationPermissionStatus] = useState<string>('unknown');
   
   // Silent audio hack state variables
   const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
@@ -90,27 +89,7 @@ export const TripDetail = () => {
   }, [user?.role]);
 
   // Notifications moved to dedicated page
-
-  // Check location permission status (optional - don't interfere with prompt)
-  useEffect(() => {
-    if (!navigator.geolocation) {
-      setLocationPermissionStatus('not-supported');
-      return;
-    }
-
-    // Only check if permissions API is available (don't force it)
-    if ('permissions' in navigator) {
-      navigator.permissions.query({ name: 'geolocation' as PermissionName }).then((result) => {
-        setLocationPermissionStatus(result.state);
-        result.onchange = () => {
-          setLocationPermissionStatus(result.state);
-        };
-      }).catch(() => {
-        // Silently fail - don't interfere
-        setLocationPermissionStatus('unknown');
-      });
-    }
-  }, []);
+  // Location permission checking removed - now handled at auth level
 
   // Start/stop location tracking based on trip status and location sharing
   // CRITICAL FIX: Only agents should track location, NOT admins or clinicians
